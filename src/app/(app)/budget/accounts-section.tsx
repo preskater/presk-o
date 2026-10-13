@@ -183,7 +183,7 @@ export async function AccountsSection({
 
       <Card
         title="Catégories"
-        description="Renommer, fusionner ou supprimer. La fusion déplace opérations, séries et budgets vers la catégorie cible et indique combien de budgets en doublon ont été supprimés ; la suppression détache les opérations (les montants restent) et supprime les budgets de la catégorie."
+        description="Renommer, fusionner ou supprimer. La fusion déplace opérations, séries et budgets vers la catégorie cible et indique combien de budgets en doublon ont été supprimés ; la suppression détache les opérations et les séries récurrentes (les montants restent) et supprime les budgets de la catégorie."
         actions={
           <Link
             href="/budget?tab=operations"

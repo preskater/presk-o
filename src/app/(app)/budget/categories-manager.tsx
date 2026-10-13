@@ -10,11 +10,11 @@ import { deleteCategoryAction, mergeCategoriesAction, updateCategoryAction } fro
  * Category management: rename, retype (only while unused), merge and delete.
  *
  * Everything destructive shows its counts before the click: a deletion detaches the
- * category from its transactions (their amounts stay) and deletes its budgets, and a
- * merge can drop duplicate budgets — the confirmation says so, and the merge reports
- * exactly what it moved. The kind select is disabled as soon as anything references the
- * category, because moving it would re-label history; merging into a same-kind category
- * is the way out, and the hint says it.
+ * category from its transactions and recurring series (their amounts and schedules stay)
+ * and deletes its budgets, and a merge can drop duplicate budgets — the confirmation says
+ * so, and the merge reports exactly what it moved. The kind select is disabled as soon as
+ * anything references the category, because moving it would re-label history; merging
+ * into a same-kind category is the way out, and the hint says it.
  */
 
 const KIND_LABELS: Record<CategoryKind, string> = {
@@ -282,10 +282,19 @@ export function CategoriesManager({ categories }: { categories: ManagedCategory[
                         <span className="text-xs">
                           Supprimer « {category.name} » ?{" "}
                           {category.transactionCount > 0
-                            ? `${category.transactionCount} opération${category.transactionCount > 1 ? "s" : ""} perdront leur catégorie (les montants restent) ; `
+                            ? category.transactionCount > 1
+                              ? `${category.transactionCount} opérations perdront leur catégorie (les montants restent) ; `
+                              : "1 opération perdra sa catégorie (les montants restent) ; "
+                            : ""}
+                          {category.recurringCount > 0
+                            ? category.recurringCount > 1
+                              ? `${category.recurringCount} séries récurrentes perdront leur catégorie ; `
+                              : "1 série récurrente perdra sa catégorie ; "
                             : ""}
                           {category.budgetCount > 0
-                            ? `${category.budgetCount} budget${category.budgetCount > 1 ? "s" : ""} seront supprimés.`
+                            ? category.budgetCount > 1
+                              ? `${category.budgetCount} budgets seront supprimés.`
+                              : "1 budget sera supprimé."
                             : "Aucun budget n'en dépend."}
                         </span>
                         <span className="flex gap-1">
