@@ -438,9 +438,51 @@ model Property {
 
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   cashflows PropertyCashflow[]
+  loans     PropertyLoan[]
 
   @@unique([userId, name])
   @@index([userId])
+}
+
+/// A loan financing a property.
+///
+/// Financing is deliberately kept apart from operating cashflow: **none of these
+/// amounts feed `computePropertyTotals`**. Interest, principal and insurance are the
+/// cost of owning the asset, not the asset's operating result, so adding them to the
+/// cashflow totals would double-count the money that also appears in the budget.
+///
+/// `outstandingBalance` is a **stored snapshot** with its observation date
+/// (`balanceAsOf`); it is never derived here. A loan whose balance was never recorded
+/// reads "inconnu", never zero. Every monetary field and the rate are exact decimals,
+/// and the currency is explicit: nothing is ever converted between currencies.
+model PropertyLoan {
+  id                 String    @id @default(cuid())
+  propertyId         String
+  label              String
+  currency           String    @default("EUR") @db.Char(3)
+  /// Positive magnitude: the amount borrowed.
+  initialPrincipal   Decimal   @db.Decimal(18, 2)
+  /// Stored balance snapshot; null means "not recorded yet".
+  outstandingBalance Decimal?  @db.Decimal(18, 2)
+  /// Date the outstanding balance was observed; set together with it.
+  balanceAsOf        DateTime? @db.Date
+  /// Annual rate as a percentage (for example 3.45), positive; null = not recorded.
+  interestRate       Decimal?  @db.Decimal(18, 2)
+  /// Term in whole months; null = not recorded.
+  termMonths         Int?
+  /// Monthly payment, positive; null = not recorded.
+  paymentAmount      Decimal?  @db.Decimal(18, 2)
+  /// Monthly insurance, positive; null = not recorded.
+  insuranceAmount    Decimal?  @db.Decimal(18, 2)
+  startDate          DateTime? @db.Date
+  endDate            DateTime? @db.Date
+  notes              String?
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
 }
 
 /// A financial entry attached to a property.
