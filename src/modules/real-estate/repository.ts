@@ -8,6 +8,7 @@ import {
   type PropertyOccupancy,
   type PropertySummary,
 } from "./domain";
+import type { LoanSummary } from "./loans";
 import type { DueCashflow } from "./alerts";
 
 /** Real-estate persistence. Every query is scoped to the owner. */
@@ -223,4 +224,155 @@ export async function listDueCashflows(
     dueDate: row.dueDate,
     settledAt: row.settledAt,
   }));
+}
+
+/** Real-estate financing. Every query is scoped to the owner through the property. */
+
+const LOAN_SELECT = {
+  id: true,
+  propertyId: true,
+  label: true,
+  currency: true,
+  initialPrincipal: true,
+  outstandingBalance: true,
+  balanceAsOf: true,
+  interestRate: true,
+  termMonths: true,
+  paymentAmount: true,
+  insuranceAmount: true,
+  startDate: true,
+  endDate: true,
+  notes: true,
+} as const;
+
+type DecimalLike = { toString(): string };
+
+type LoanRow = {
+  id: string;
+  propertyId: string;
+  label: string;
+  currency: string;
+  initialPrincipal: DecimalLike;
+  outstandingBalance: DecimalLike | null;
+  balanceAsOf: Date | null;
+  interestRate: DecimalLike | null;
+  termMonths: number | null;
+  paymentAmount: DecimalLike | null;
+  insuranceAmount: DecimalLike | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  notes: string | null;
+};
+
+function toLoanSummary(row: LoanRow): LoanSummary {
+  const decimal = (value: DecimalLike | null): Decimal | null =>
+    value === null ? null : new Decimal(value.toString());
+
+  return {
+    id: row.id,
+    propertyId: row.propertyId,
+    label: row.label,
+    currency: assertCurrency(row.currency),
+    initialPrincipal: new Decimal(row.initialPrincipal.toString()),
+    outstandingBalance: decimal(row.outstandingBalance),
+    balanceAsOf: row.balanceAsOf,
+    interestRate: decimal(row.interestRate),
+    termMonths: row.termMonths,
+    paymentAmount: decimal(row.paymentAmount),
+    insuranceAmount: decimal(row.insuranceAmount),
+    startDate: row.startDate,
+    endDate: row.endDate,
+    notes: row.notes,
+  };
+}
+
+export async function listLoans(userId: string): Promise<LoanSummary[]> {
+  const rows = await getPrisma().propertyLoan.findMany({
+    where: { property: { userId } },
+    orderBy: [{ propertyId: "asc" }, { label: "asc" }],
+    select: LOAN_SELECT,
+  });
+
+  return rows.map(toLoanSummary);
+}
+
+/** Owner-scoped loan lookup: a form identifier is never trusted. */
+export async function findLoan(
+  userId: string,
+  loanId: string,
+): Promise<LoanSummary | null> {
+  const row = await getPrisma().propertyLoan.findFirst({
+    where: { id: loanId, property: { userId } },
+    select: LOAN_SELECT,
+  });
+
+  return row ? toLoanSummary(row) : null;
+}
+
+export type LoanWriteInput = {
+  propertyId: string;
+  label: string;
+  currency: Currency;
+  initialPrincipal: Decimal;
+  outstandingBalance: Decimal | null;
+  balanceAsOf: Date | null;
+  interestRate: Decimal | null;
+  termMonths: number | null;
+  paymentAmount: Decimal | null;
+  insuranceAmount: Decimal | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  notes: string | null;
+};
+
+/** Persists a loan's fields. Amounts are stored as exact two-decimal strings. */
+function toLoanData(input: LoanWriteInput) {
+  const amount = (value: Decimal | null): string | null =>
+    value === null ? null : value.toFixed(2);
+
+  return {
+    label: input.label.trim(),
+    currency: input.currency,
+    initialPrincipal: input.initialPrincipal.toFixed(2),
+    outstandingBalance: amount(input.outstandingBalance),
+    balanceAsOf: input.balanceAsOf,
+    interestRate: amount(input.interestRate),
+    termMonths: input.termMonths,
+    paymentAmount: amount(input.paymentAmount),
+    insuranceAmount: amount(input.insuranceAmount),
+    startDate: input.startDate,
+    endDate: input.endDate,
+    notes: input.notes,
+  };
+}
+
+export async function createLoan(
+  input: LoanWriteInput,
+): Promise<{ id: string }> {
+  return getPrisma().propertyLoan.create({
+    data: { propertyId: input.propertyId, ...toLoanData(input) },
+    select: { id: true },
+  });
+}
+
+/** Updates owner-scoped only: a loan from another owner matches nothing. */
+export async function updateLoan(
+  userId: string,
+  loanId: string,
+  input: LoanWriteInput,
+): Promise<boolean> {
+  const { count } = await getPrisma().propertyLoan.updateMany({
+    where: { id: loanId, property: { userId } },
+    data: { propertyId: input.propertyId, ...toLoanData(input) },
+  });
+
+  return count === 1;
+}
+
+export async function deleteLoan(userId: string, loanId: string): Promise<boolean> {
+  const { count } = await getPrisma().propertyLoan.deleteMany({
+    where: { id: loanId, property: { userId } },
+  });
+
+  return count === 1;
 }
