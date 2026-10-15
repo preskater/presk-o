@@ -80,6 +80,11 @@ docs/                architecture/overview.md, decisions/
   the envelope, resolves when the overrun takes over).
 - `PropertyCashflow` carries **either** a typed `amount` **or** a `transactionId`
   (mutually exclusive, link unique): no double counting in property totals.
+- `PropertyLoan` holds a property's financing (capital, a stored `outstandingBalance`
+  snapshot with `balanceAsOf`, an optional positive rate, `termMonths`, monthly
+  `paymentAmount`/`insuranceAmount`, dates), owned through its property and **never**
+  fed into `computePropertyTotals`: financing is the cost of owning, not operating
+  cashflow. A missing balance reads unknown, never zero.
 - `IntegrationConnection.credentialsCiphertext` holds the AES-256-GCM token; it is
   never returned to the browser.
 - `ProjectSnapshot` / `IssueSnapshot` / `MilestoneSnapshot` are keyed by
@@ -206,7 +211,9 @@ http://dashboard.localhost:8888 (the proxy belongs to the `full` profile).
   its own data; `?edit=`/`?editBudget=`/`?editGoal=`/`?editRecurring=` links land on
   their tab.
 - Real estate: properties (explicit occupancy — not all rented), cashflow entries
-  (amount XOR transaction link), totals, due dates, notes.
+  (amount XOR transaction link), totals, due dates, notes. Loans (financing): create,
+  edit (`?editLoan=`) and delete with a confirmation, totalled per currency and shown
+  apart from the operating figures — financing never counts in the property totals.
 - Integrations: read-only GitHub (projects, open issues + PRs, explorer with
   combinable filters validated against present data, milestones); encrypted tokens;
   manual idempotent sync (`src/jobs/sync.ts`), fetch bounded on purpose. GitLab is
@@ -235,8 +242,9 @@ http://dashboard.localhost:8888 (the proxy belongs to the `full` profile).
 
 - No scheduler/cron for sync — the function exists, only the manual trigger ships.
 - Properties and cashflow entries cannot be edited or deleted from the interface yet.
-  Accounts (rename/retype/archive/restore), categories (rename/merge/delete) and
-  recurring series (edit) are managed in the « Comptes » tab of `/budget`.
+  Loans (financing), accounts (rename/retype/archive/restore), categories
+  (rename/merge/delete) and recurring series (edit) are managed in the interface
+  (loans on `/real-estate`, the rest in the « Comptes » tab of `/budget`).
 - No bank connector, no payment/accounting/tax advice, no writing to GitHub or
   GitLab, no document storage, no AI features. Out of scope by design. The CSV
   import is manual and deliberate.

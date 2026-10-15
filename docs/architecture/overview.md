@@ -178,6 +178,18 @@ asked for: a cascade here would silently change what a property is worth.
   its currency). They are **archived**, never deleted: an archived account leaves the
   entry forms and the alert engine and keeps its history readable; restoring clears the
   stamp. Accounts and categories are managed in the « Comptes » tab.
+- **Property financing** is kept apart from operating cashflow on purpose. A
+  `PropertyLoan` describes the money that funds a property: a positive
+  `initialPrincipal`, an optional stored `outstandingBalance` with its observation date
+  (`balanceAsOf`), an optional positive interest rate (a percentage), an optional term
+  in months, optional monthly `paymentAmount` and `insuranceAmount`, and optional start
+  and end dates. A loan carries its own explicit currency and is owner-scoped through
+  its property. **None of these amounts feeds `computePropertyTotals`**: interest,
+  principal and insurance are the cost of owning the asset, not its operating result,
+  and the same money already appears in the budget, so adding them to the cashflow
+  totals would double-count it. A missing figure — a balance, a rate, a term — reads
+  « inconnu », never zero. Currencies are never converted: financing is totalled per
+  currency.
 
 ## Documented indicator definitions
 
@@ -343,6 +355,18 @@ asked for: a cascade here would silently change what a property is worth.
   projection stays "—" while the pending net is still told — nothing is made up from it.
 - Property totals — each cashflow entry counts once. When an entry is linked to
   a transaction, the transaction is the only source of the amount.
+- Property financing (real-estate page, « Financement » card) — the loans of a property,
+  shown beside the operating figures and **never added to them**:
+  - *monthly cost* — the sum of each loan's monthly payment + insurance, per currency;
+    « inconnu » when no loan of that currency records either, never a zero;
+  - *outstanding debt* — the sum of the recorded `outstandingBalance` snapshots, per
+    currency; a loan whose balance was never recorded is excluded from the total and
+    counted apart (its debt is unknown, not zero);
+  - *rate* — an annual percentage, positive; the two-decimal amount parser is reused, so
+    a missing rate reads « inconnu »;
+  - the operating totals of the property (`income`, `expenses`, `net`) are untouched by
+    any loan: financing is a separate ledger of cost, not a movement of the property's
+    cashflow.
 - GitHub issues — only **open** issues and pull requests are kept, and only the
   fields needed to act: title, link, author, **assignees**, **milestone**, comment
   count, labels, dates. No description, no comment body, no source code: reading them
