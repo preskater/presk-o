@@ -60,6 +60,7 @@ export function IssuesCard({
   return (
     <Card
       title="Issues et pull requests ouvertes"
+      collapsible
       description={
         issueTrackingConnected
           ? `Le texte reste chez le fournisseur : seuls le titre, le lien, l'auteur, les assignés, le jalon, les étiquettes et les dates sont repris ici.${
@@ -145,12 +146,17 @@ export function IssuesCard({
                     </td>
                     <td className={tdClass}>
                       {isFocused ? (
-                        <Link href="/integrations" className="underline-offset-2 hover:underline">
+                        <Link
+                          href="/integrations"
+                          scroll={false}
+                          className="underline-offset-2 hover:underline"
+                        >
                           Tous les dépôts
                         </Link>
                       ) : (
                         <Link
                           href={`/integrations?repo=${encodeURIComponent(entry.repository)}`}
+                          scroll={false}
                           className="underline-offset-2 hover:underline"
                         >
                           Voir ses issues
