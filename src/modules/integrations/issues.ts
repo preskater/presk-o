@@ -248,6 +248,19 @@ export function ageInDays(from: Date, now: Date): number {
   return Math.floor((now.getTime() - from.getTime()) / MILLISECONDS_PER_DAY);
 }
 
+/** Age in plain words, floored: "il y a 3 j" never means 2 days and 20 hours. */
+export function describeAge(days: number): string {
+  if (days <= 0) {
+    return "aujourd'hui";
+  }
+
+  if (days === 1) {
+    return "hier";
+  }
+
+  return `il y a ${days} j`;
+}
+
 /** True when the issue is an issue: a pull request is never "unanswered". */
 export function isQuestion(issue: Pick<IssueLike, "kind">): boolean {
   return issue.kind === "ISSUE";

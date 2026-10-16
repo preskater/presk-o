@@ -208,7 +208,9 @@ http://dashboard.localhost:8888 (the proxy belongs to the `full` profile).
 - Real estate: properties (explicit occupancy — not all rented), cashflow entries
   (amount XOR transaction link), totals, due dates, notes.
 - Integrations: read-only GitHub (projects, open issues + PRs, explorer with
-  combinable filters validated against present data, milestones); encrypted tokens;
+  combinable filters validated against present data, an actionable work queue —
+  unanswered, old PRs, no milestone/label, blocked, milestones due — computed from
+  stored data only, milestones); encrypted tokens;
   manual idempotent sync (`src/jobs/sync.ts`), fetch bounded on purpose. GitLab is
   limited to project metadata by policy.
 - Alerts (`/alerts`, « Alertes » in the nav): deterministic rules only (low balance,

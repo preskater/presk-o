@@ -29,6 +29,7 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
+import { buildWorkQueue } from "@/modules/integrations/work-queue";
 import {
   listConnections,
   listIssues,
@@ -39,6 +40,7 @@ import { connectProviderAction, syncConnectionAction } from "./actions";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
+import { WorkQueueCard } from "./work-queue-card";
 
 export const dynamic = "force-dynamic";
 
@@ -146,6 +148,10 @@ export default async function IntegrationsPage({
 
   const filteredIssues = filterIssues(issues, filters);
 
+  // The queue reads the same filtered set as the explorer, so a filter can never make
+  // the two views disagree about what is being looked at.
+  const workQueue = buildWorkQueue(filteredIssues, milestones, { now });
+
   return (
     <>
       <PageHeader
@@ -178,8 +184,17 @@ export default async function IntegrationsPage({
         </Notice>
       ) : null}
 
+      {issueConnections.length > 0 ? (
+        <WorkQueueCard
+          queue={workQueue}
+          issueTrackingConnected
+          lastSyncedAt={lastIssueSync}
+        />
+      ) : null}
+
       <Card
         title="Connexions"
+        collapsible
         description="Un jeton n'est jamais renvoyé au navigateur : seul son état est affiché."
       >
         {connections.length === 0 ? (
@@ -279,6 +294,7 @@ export default async function IntegrationsPage({
 
       <Card
         title="Synchronisations"
+        collapsible
         description="Chaque passage est conservé : état, volumes et durée. Un dépôt non lu garde ses données inconnues — jamais comptées comme vides."
       >
         {runs.length === 0 ? (
@@ -355,6 +371,8 @@ export default async function IntegrationsPage({
         <div id="historique-synchronisations">
           <Card
             title="Historique des synchronisations"
+            collapsible
+            defaultOpen={false}
             description="Les 50 derniers passages, du plus récent au plus ancien. La politique de conservation est documentée dans docs/architecture/overview.md."
           >
             <TableShell caption="Historique des synchronisations">
@@ -435,6 +453,8 @@ export default async function IntegrationsPage({
 
       <Card
         title="Ajouter ou remplacer une connexion"
+        collapsible
+        defaultOpen={false}
         description="Créez un jeton dédié en lecture seule. Le jeton est chiffré avant d'être enregistré (AES-256-GCM)."
       >
         <form action={connectProviderAction} className="flex flex-wrap items-end gap-3">

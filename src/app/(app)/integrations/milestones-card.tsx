@@ -31,6 +31,8 @@ export function MilestonesCard({
   return (
     <Card
       title="Jalons"
+      collapsible
+      defaultOpen={false}
       description={
         lastSyncedAt
           ? `Échéances et avancement, lus chez le fournisseur. Dernière lecture : ${new Intl.DateTimeFormat("fr-FR", { timeZone: "UTC", dateStyle: "short" }).format(lastSyncedAt)}.`
