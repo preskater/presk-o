@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import {
   computeLoanTotals,
+  computeMonthlyPayment,
   loanInputSchema,
   loanUpdateSchema,
   type LoanSummary,
@@ -179,5 +180,68 @@ describe("loanInputSchema", () => {
   it("requires an identifier when updating", () => {
     expect(loanUpdateSchema.safeParse(valid).success).toBe(false);
     expect(loanUpdateSchema.safeParse({ ...valid, id: "loan-1" }).success).toBe(true);
+  });
+});
+
+describe("computeMonthlyPayment", () => {
+  it("computes the annuity payment for a full loan", () => {
+    const payment = computeMonthlyPayment({
+      principal: new Decimal("250000.00"),
+      termMonths: 240,
+      annualRatePercent: new Decimal("3.45"),
+    });
+
+    expect(payment?.toFixed(2)).toBe("1443.48");
+  });
+
+  it("scales with the amount, term and rate", () => {
+    const short = computeMonthlyPayment({
+      principal: new Decimal("12000.00"),
+      termMonths: 36,
+      annualRatePercent: new Decimal("5.25"),
+    });
+
+    expect(short?.toFixed(2)).toBe("361.00");
+  });
+
+  it("treats a zero rate as an interest-free loan", () => {
+    const payment = computeMonthlyPayment({
+      principal: new Decimal("250000.00"),
+      termMonths: 240,
+      annualRatePercent: new Decimal("0"),
+    });
+
+    expect(payment?.toFixed(2)).toBe("1041.67");
+  });
+
+  it("returns nothing when the rate is missing, never a zero", () => {
+    expect(
+      computeMonthlyPayment({
+        principal: new Decimal("250000.00"),
+        termMonths: 240,
+        annualRatePercent: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns nothing without a usable term", () => {
+    const base = {
+      principal: new Decimal("250000.00"),
+      annualRatePercent: new Decimal("3.45"),
+    };
+
+    expect(computeMonthlyPayment({ ...base, termMonths: null })).toBeNull();
+    expect(computeMonthlyPayment({ ...base, termMonths: 0 })).toBeNull();
+    expect(computeMonthlyPayment({ ...base, termMonths: -12 })).toBeNull();
+  });
+
+  it("returns nothing for a non-positive principal", () => {
+    expect(
+      computeMonthlyPayment({
+        principal: new Decimal("0"),
+        termMonths: 240,
+        annualRatePercent: new Decimal("3.45"),
+      }),
+    ).toBeNull();
   });
 });

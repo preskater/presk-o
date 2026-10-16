@@ -104,6 +104,51 @@ export function computeLoanTotals(
   return { currency, monthlyCost, outstandingDebt, unknownBalances };
 }
 
+/**
+ * The constant monthly payment of a loan, from the standard amortisation formula:
+ *
+ *     M = P · i / (1 − (1 + i)^(−n))
+ *
+ * where `P` is the borrowed principal, `i` the monthly rate (`annualRatePercent / 100 / 12`)
+ * and `n` the term in months. A zero rate is an interest-free loan, `M = P / n`.
+ *
+ * Returns `null` — never a guess — unless the principal is positive, the term is a
+ * positive whole number of months **and** a rate was recorded: a monthly payment cannot
+ * be computed from a missing rate, and inventing zero would understate the cost. The
+ * result is rounded half-up on cents, the precision every amount is stored at. This is
+ * the *estimate* a bank's schedule matches to the cent on the regular instalments; the
+ * final instalment of a real schedule usually differs by a few cents.
+ */
+export function computeMonthlyPayment(input: {
+  principal: Decimal;
+  termMonths: number | null;
+  annualRatePercent: Decimal | null;
+}): Decimal | null {
+  const { principal, termMonths, annualRatePercent } = input;
+
+  if (
+    principal.lessThanOrEqualTo(0) ||
+    termMonths === null ||
+    !Number.isInteger(termMonths) ||
+    termMonths <= 0 ||
+    annualRatePercent === null ||
+    annualRatePercent.isNegative()
+  ) {
+    return null;
+  }
+
+  const months = new Decimal(termMonths);
+  const monthlyRate = annualRatePercent.dividedBy(100).dividedBy(12);
+
+  const payment = monthlyRate.isZero()
+    ? principal.dividedBy(months)
+    : principal
+        .times(monthlyRate)
+        .dividedBy(new Decimal(1).minus(new Decimal(1).plus(monthlyRate).pow(-termMonths)));
+
+  return payment.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+}
+
 const POSITIVE_MESSAGE = "La valeur doit être supérieure à zéro.";
 
 /** A required positive magnitude, using the shared two-decimal amount parser. */

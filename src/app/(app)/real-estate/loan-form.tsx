@@ -1,12 +1,17 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import type Decimal from "decimal.js";
+import { useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { FormFeedback, SubmitButton, useRecordedAction } from "@/components/forms";
 import { Field, Notice, inputClass } from "@/components/ui";
-import { SUPPORTED_CURRENCIES } from "@/lib/money";
-import { loanInputSchema, type LoanInput } from "@/modules/real-estate/loans";
+import { parseAmountInput, SUPPORTED_CURRENCIES } from "@/lib/money";
+import {
+  computeMonthlyPayment,
+  loanInputSchema,
+  type LoanInput,
+} from "@/modules/real-estate/loans";
 import { createLoanAction, updateLoanAction } from "./actions";
 
 /** String-only initial values for the edit form: a client never receives a Decimal. */
@@ -69,6 +74,29 @@ function formDefaults(
   return { ...EMPTY, propertyId: properties[0]?.id ?? "" };
 }
 
+/** A hand-typed amount reduced to an exact decimal, or `null` when it does not parse. */
+function tryParseAmount(value: string | null | undefined): Decimal | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return parseAmountInput(value);
+  } catch {
+    return null;
+  }
+}
+
+/** A positive whole number of months, or `null` when the field is empty or unusable. */
+function tryParseTerm(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const months = Number(value);
+  return Number.isInteger(months) && months > 0 ? months : null;
+}
+
 /**
  * Creates or edits a property loan.
  *
@@ -94,6 +122,40 @@ export function LoanForm({
     loan?.id ? updateLoanAction({ ...values, id: loan.id }) : createLoanAction(values),
   );
   const { errors, isSubmitting } = form.formState;
+
+  // The monthly payment is offered from the three figures that determine it. Once the
+  // owner types their own value it is left alone — a bank's exact instalment wins over
+  // our estimate — and clearing the field hands it back to the suggestion.
+  const principalRaw = useWatch({ control: form.control, name: "initialPrincipal" });
+  const termRaw = useWatch({ control: form.control, name: "termMonths" });
+  const rateRaw = useWatch({ control: form.control, name: "interestRate" });
+  const [paymentEdited, setPaymentEdited] = useState(
+    Boolean(loan?.paymentAmount && loan.paymentAmount.trim() !== ""),
+  );
+
+  useEffect(() => {
+    if (paymentEdited) {
+      return;
+    }
+
+    const principal = tryParseAmount(principalRaw);
+    const rate = tryParseAmount(rateRaw);
+    const termMonths = tryParseTerm(termRaw);
+
+    if (!principal || rate === null || termMonths === null) {
+      return;
+    }
+
+    const payment = computeMonthlyPayment({ principal, termMonths, annualRatePercent: rate });
+    if (!payment) {
+      return;
+    }
+
+    const formatted = payment.toFixed(2);
+    if (form.getValues("paymentAmount") !== formatted) {
+      form.setValue("paymentAmount", formatted, { shouldValidate: false });
+    }
+  }, [principalRaw, termRaw, rateRaw, paymentEdited, form]);
 
   // Same rule as the other forms: adopt the first property, never override a choice.
   useEffect(() => {
@@ -230,7 +292,7 @@ export function LoanForm({
         label="Mensualité"
         htmlFor="loan-payment"
         error={errors.paymentAmount?.message}
-        hint="Hors assurance."
+        hint="Renseignée automatiquement à partir du capital, de la durée et du taux (formule d'amortissement) — hors assurance. Modifiable."
       >
         <input
           id="loan-payment"
@@ -238,7 +300,10 @@ export function LoanForm({
           inputMode="decimal"
           placeholder="1250,00"
           autoComplete="off"
-          {...form.register("paymentAmount")}
+          {...form.register("paymentAmount", {
+            // Typing here claims the field; clearing it hands it back to the suggestion.
+            onChange: (event) => setPaymentEdited(event.target.value !== ""),
+          })}
         />
       </Field>
 
