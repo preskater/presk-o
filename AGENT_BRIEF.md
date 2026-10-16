@@ -16,7 +16,7 @@ read-only; personal and company data are not mixed.
 
 - Next.js 16.3.7 (App Router, Turbopack, `src/` directory), React 19.2.8, TypeScript 5
 - Tailwind CSS 4, ESLint 9 (flat config)
-- Prisma 7.10 with the `@prisma/adapter-pg` driver adapter, PostgreSQL 17
+- Prisma 7.10 with the `@prisma/adapter-pg` driver adapter, PostgreSQL 18
 - Auth.js v5 beta: credentials provider, bcryptjs, JWT sessions
 - zod 4, decimal.js, react-hook-form + @hookform/resolvers
 - Vitest 5; npm; Docker Compose; GitHub Actions (`.github/workflows/ci.yml`)
@@ -265,6 +265,10 @@ http://dashboard.localhost:8888 (the proxy belongs to the `full` profile).
 - This machine: host ports 5432 and 3000 are usually taken (another project uses
   them) — use `POSTGRES_PORT=5433` and `env PORT=3100 npm run dev`; Docker Desktop
   must be running.
+- PostgreSQL 18+ images need the `db-data` volume mounted at `/var/lib/postgresql`
+  (data lives in `/var/lib/postgresql/18/docker`); mounting `/var/lib/postgresql/data`
+  makes the entrypoint refuse to start. The pre-18 dev cluster is parked at
+  `/var/lib/postgresql/pg17-retired` in the volume (see `docs/decisions/0002`).
 
 ## Verification recipes
 

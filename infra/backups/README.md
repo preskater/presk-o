@@ -13,6 +13,15 @@ personal financial data.
 ./infra/backups/restore.sh infra/backups/dashboard-<timestamp>.dump dashboard_restore_test
 ```
 
+## PostgreSQL major-version upgrades
+
+The compose image keeps data under `/var/lib/postgresql/<major>/docker`, with the
+volume mounted once at `/var/lib/postgresql`. Changing the image to a new major
+version is therefore a data migration, not a restart: dump the old cluster with
+the previous major image, start the new image (it initialises a fresh cluster),
+restore the dump and compare row counts. The 17 → 18 migration is described step
+by step in `docs/decisions/0002-postgresql-18-data-layout.md`.
+
 ## To plan before production
 
 - Encrypt backups at rest and store them outside the host (object storage, second disk).
