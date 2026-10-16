@@ -12,12 +12,19 @@ import {
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
 import { formatDateOnly } from "@/lib/dates";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, type Currency } from "@/lib/money";
+import type Decimal from "decimal.js";
 import { listTransactions } from "@/modules/budget/repository";
-import { listProperties } from "@/modules/real-estate/repository";
+import { listLoans, listProperties, findLoan } from "@/modules/real-estate/repository";
+import {
+  computeLoanTotals,
+  toLoanFormInitialValues,
+} from "@/modules/real-estate/loans";
 import type { PropertyOccupancy } from "@/modules/real-estate/domain";
 import { CashflowForm, type TransactionOption } from "./cashflow-form";
 import { PropertyForm } from "./property-form";
+import { LoanForm } from "./loan-form";
+import { DeleteLoanButton } from "./delete-loan-button";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +39,34 @@ const OCCUPANCY_LABELS: Record<PropertyOccupancy, string> = {
   OTHER: "Autre",
 };
 
-export default async function RealEstatePage() {
+/** A financing figure that was never recorded reads "inconnu", never zero. */
+function formatOptionalMoney(amount: Decimal | null, currency: Currency): string {
+  if (!amount) {
+    return "inconnu";
+  }
+
+  return formatMoney({ amount, currency });
+}
+
+export default async function RealEstatePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const editLoanId = typeof params.editLoan === "string" ? params.editLoan : null;
+
   const user = await requireUser();
-  const [properties, recentTransactions] = await Promise.all([
+  const [properties, recentTransactions, loans] = await Promise.all([
     listProperties(user.id),
     // A cashflow entry can be linked to an operation recorded in the budget.
     listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT }),
+    listLoans(user.id),
   ]);
+
+  // The edited loan is looked up owner-scoped: a foreign or unknown id falls back to
+  // the creation form rather than revealing anything.
+  const editingLoan = editLoanId ? await findLoan(user.id, editLoanId) : null;
 
   // Reduced to strings: the form is a client component and never receives a Decimal.
   const transactionOptions: TransactionOption[] = recentTransactions.map((transaction) => ({
@@ -50,6 +78,21 @@ export default async function RealEstatePage() {
 
   const rentedCount = properties.filter((property) => property.occupancy === "RENTED").length;
   const vacantCount = properties.filter((property) => property.occupancy === "VACANT").length;
+
+  const propertyOptions = properties.map((property) => ({
+    id: property.id,
+    name: property.name,
+  }));
+
+  const propertyNameById = new Map(properties.map((property) => [property.id, property.name]));
+
+  const loanCurrencies = Array.from(new Set(loans.map((loan) => loan.currency)));
+  const financingTotals = loanCurrencies.map((currency) =>
+    computeLoanTotals(
+      loans.filter((loan) => loan.currency === currency),
+      { currency },
+    ),
+  );
 
   return (
     <>
@@ -81,15 +124,177 @@ export default async function RealEstatePage() {
           <details>
             <summary className="cursor-pointer text-sm font-medium">Nouveau flux</summary>
             <div className="pt-3">
-              <CashflowForm
-                properties={properties.map((property) => ({
-                  id: property.id,
-                  name: property.name,
-                }))}
-                transactions={transactionOptions}
+              <CashflowForm properties={propertyOptions} transactions={transactionOptions} />
+            </div>
+          </details>
+        </div>
+      </Card>
+
+      <Card
+        title="Financement"
+        description="Les prêts d'un bien : capital, taux, mensualité et assurance. Le financement est présenté à part et n'entre jamais dans les totaux d'exploitation."
+      >
+        <div className="flex flex-col gap-4">
+          <details open={Boolean(editingLoan)}>
+            <summary className="cursor-pointer text-sm font-medium">
+              {editingLoan ? `Modifier le prêt « ${editingLoan.label} »` : "Nouveau prêt"}
+            </summary>
+            <div className="pt-3">
+              {editingLoan ? (
+                <p className="mb-2 text-xs">
+                  <Link href="/real-estate" className="underline">
+                    Annuler la modification
+                  </Link>
+                </p>
+              ) : null}
+              <LoanForm
+                key={editingLoan?.id ?? "new"}
+                properties={propertyOptions}
+                loan={editingLoan ? toLoanFormInitialValues(editingLoan) : null}
               />
             </div>
           </details>
+
+          {loans.length === 0 ? (
+            <EmptyState
+              title="Aucun financement enregistré"
+              description="Ajoutez un prêt pour suivre le capital restant dû, le taux et la mensualité d'un bien. Ces montants restent séparés des charges et recettes."
+            />
+          ) : (
+            <>
+              <TableShell caption="Prêts rattachés aux biens">
+                <thead>
+                  <tr>
+                    <th scope="col" className={thClass}>
+                      Bien
+                    </th>
+                    <th scope="col" className={thClass}>
+                      Prêt
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Capital
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Solde restant
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Taux
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Mensualité
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Assurance
+                    </th>
+                    <th scope="col" className={`${thClass} text-right`}>
+                      Durée
+                    </th>
+                    <th scope="col" className={thClass}>
+                      Échéances
+                    </th>
+                    <th scope="col" className={thClass}>
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loans.map((loan) => (
+                    <tr key={loan.id}>
+                      <td className={tdClass}>
+                        {propertyNameById.get(loan.propertyId) ?? "Bien inconnu"}
+                      </td>
+                      <td className={tdClass}>{loan.label}</td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {formatMoney({
+                          amount: loan.initialPrincipal,
+                          currency: loan.currency,
+                        })}
+                      </td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {formatOptionalMoney(loan.outstandingBalance, loan.currency)}
+                        {loan.balanceAsOf ? (
+                          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                            au {formatDateOnly(loan.balanceAsOf)}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {loan.interestRate ? `${loan.interestRate.toFixed(2)} %` : "inconnu"}
+                      </td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {formatOptionalMoney(loan.paymentAmount, loan.currency)}
+                      </td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {formatOptionalMoney(loan.insuranceAmount, loan.currency)}
+                      </td>
+                      <td className={`${tdClass} text-right tabular-nums`}>
+                        {loan.termMonths !== null ? `${loan.termMonths} mois` : "inconnu"}
+                      </td>
+                      <td className={tdClass}>
+                        {loan.startDate || loan.endDate ? (
+                          <span className="text-xs">
+                            {loan.startDate ? formatDateOnly(loan.startDate) : "—"}
+                            {" → "}
+                            {loan.endDate ? formatDateOnly(loan.endDate) : "—"}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500 dark:text-zinc-400">inconnu</span>
+                        )}
+                      </td>
+                      <td className={tdClass}>
+                        <span className="flex flex-col items-start gap-1">
+                          <Link
+                            href={`/real-estate?editLoan=${loan.id}`}
+                            className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                          >
+                            Modifier
+                          </Link>
+                          <DeleteLoanButton loanId={loan.id} label={loan.label} />
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </TableShell>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {financingTotals.map((total) => (
+                  <StatCard
+                    key={total.currency}
+                    label={`Coût mensuel (${total.currency})`}
+                    value={
+                      total.monthlyCost
+                        ? formatMoney({ amount: total.monthlyCost, currency: total.currency })
+                        : "inconnu"
+                    }
+                    hint="Mensualités + assurances"
+                  />
+                ))}
+                {financingTotals.map((total) => (
+                  <StatCard
+                    key={`${total.currency}-debt`}
+                    label={`Dette restante (${total.currency})`}
+                    value={
+                      total.outstandingDebt
+                        ? formatMoney({ amount: total.outstandingDebt, currency: total.currency })
+                        : "inconnu"
+                    }
+                    hint={
+                      total.unknownBalances > 0
+                        ? `${total.unknownBalances} solde(s) non renseigné(s)`
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          <Notice tone="info">
+            Le financement (capital, intérêts, assurance) est présenté à part : il ne compte
+            ni dans les recettes ni dans les charges d&apos;exploitation du bien. Un solde
+            restant dû non renseigné reste « inconnu », jamais zéro.
+          </Notice>
         </div>
       </Card>
 
@@ -108,7 +313,7 @@ export default async function RealEstatePage() {
 
           <Card
             title="Détail par bien"
-            description="Les flux liés à une transaction ne sont comptés qu'une seule fois."
+            description="Les flux liés à une transaction ne sont comptés qu'une seule fois. Le financement (prêts) est suivi à part, ci-dessus."
           >
             <TableShell caption="Biens et flux rattachés">
               <thead>

@@ -105,7 +105,11 @@ Working today:
   streamed (the decision is documented in the architecture notes). An unknown value
   exports as an empty cell with its reason, never as a zero.
 - Real estate: properties and cashflow entries entered from the real-estate
-  page, occupancy status, totals, due dates.- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
+  page, occupancy status, totals, due dates. A **Financement** card tracks the loans
+  of a property — capital, a dated outstanding-balance snapshot, rate, term, monthly
+  payment and insurance — with create, edit and delete, kept deliberately apart from
+  the operating figures: financing never enters the property totals, and a missing
+  balance or rate reads "inconnu", never zero.- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,
   type, assignee, label, milestone, state, text), and milestones with their due dates
@@ -117,7 +121,7 @@ Working today:
 Not implemented yet:
 
 - Properties and cashflow entries cannot be edited or deleted from the interface yet
-  (transactions, budgets, goals, recurring series, accounts and categories all can).
+  (loans, transactions, budgets, goals, recurring series, accounts and categories all can).
 - A scheduler entry point for automatic synchronisation (the function exists and
   is idempotent; the trigger is not shipped).
 - Bank connection, payments, accounting, tax advice — permanently out of scope (the
