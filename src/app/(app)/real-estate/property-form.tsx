@@ -1,16 +1,18 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { FormFeedback, SubmitButton, useRecordedAction } from "@/components/forms";
 import { Field, inputClass } from "@/components/ui";
+import { SUPPORTED_CURRENCIES } from "@/lib/money";
 import {
   PROPERTY_OCCUPANCIES,
   propertyInputSchema,
   type PropertyInput,
   type PropertyOccupancy,
 } from "@/modules/real-estate/domain";
-import { createPropertyAction } from "./actions";
+import { createPropertyAction, updatePropertyAction } from "./actions";
 
 const OCCUPANCY_LABELS: Record<PropertyOccupancy, string> = {
   RENTED: "Loué",
@@ -20,26 +22,80 @@ const OCCUPANCY_LABELS: Record<PropertyOccupancy, string> = {
   OTHER: "Autre",
 };
 
+/** String-only initial values for the edit form: a client never receives a Decimal. */
+export type PropertyFormValues = {
+  id: string;
+  name: string;
+  address: string;
+  occupancy: string;
+  currency: string;
+  purchaseDate: string;
+  purchasePrice: string;
+  estimatedValue: string;
+  estimatedValueAsOf: string;
+  targetGainRate: string;
+  notes: string;
+};
+
+const EMPTY: Omit<PropertyFormValues, "id"> = {
+  name: "",
+  address: "",
+  occupancy: "VACANT",
+  currency: "EUR",
+  purchaseDate: "",
+  purchasePrice: "",
+  estimatedValue: "",
+  estimatedValueAsOf: "",
+  targetGainRate: "10",
+  notes: "",
+};
+
+/** Form defaults for a creation (empty) or an edition (the property's strings). */
+function formDefaults(property?: PropertyFormValues | null): PropertyInput {
+  const values = property ?? EMPTY;
+
+  return {
+    name: values.name,
+    address: values.address,
+    occupancy: values.occupancy as PropertyOccupancy,
+    currency: values.currency,
+    purchaseDate: values.purchaseDate,
+    purchasePrice: values.purchasePrice,
+    estimatedValue: values.estimatedValue,
+    estimatedValueAsOf: values.estimatedValueAsOf,
+    targetGainRate: values.targetGainRate,
+    notes: values.notes,
+  };
+}
+
 /**
- * Creates a property.
+ * Creates or edits a property.
  *
  * Occupancy is asked for explicitly rather than assumed: a property is not
- * necessarily rented (see AGENTS.md).
+ * necessarily rented (see AGENTS.md). Prices are optional and read "inconnu" when
+ * left empty — never zero. The sale itself is not part of this form: it is recorded
+ * through the dedicated sale panel, which validates date, price and costs together.
  */
-export function PropertyForm() {
+export function PropertyForm({ property }: { property?: PropertyFormValues | null }) {
+  const editing = Boolean(property?.id);
+
   const form = useForm<PropertyInput>({
     resolver: zodResolver(propertyInputSchema, undefined, { raw: true }),
-    defaultValues: {
-      name: "",
-      address: "",
-      occupancy: "VACANT",
-      purchaseDate: "",
-      saleDate: "",
-      notes: "",
-    },
+    defaultValues: formDefaults(property),
   });
-  const { result, submit } = useRecordedAction(form, createPropertyAction);
+
+  const { result, submit } = useRecordedAction(form, (values) =>
+    property?.id
+      ? updatePropertyAction({ ...values, id: property.id })
+      : createPropertyAction(values),
+  );
   const { errors, isSubmitting } = form.formState;
+
+  // `defaultValues` are read once, on mount: adopting a refreshed property (or
+  // switching target) requires an explicit reset. The page keys this component by id.
+  useEffect(() => {
+    form.reset(formDefaults(property));
+  }, [property, form]);
 
   return (
     <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
@@ -61,6 +117,21 @@ export function PropertyForm() {
           {PROPERTY_OCCUPANCIES.map((occupancy) => (
             <option key={occupancy} value={occupancy}>
               {OCCUPANCY_LABELS[occupancy]}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field
+        label="Devise des prix"
+        htmlFor="property-currency"
+        error={errors.currency?.message}
+        hint="Acquisition, estimation et cession. Les flux gardent leur propre devise."
+      >
+        <select id="property-currency" className={inputClass} {...form.register("currency")}>
+          {SUPPORTED_CURRENCIES.map((currency) => (
+            <option key={currency} value={currency}>
+              {currency}
             </option>
           ))}
         </select>
@@ -94,15 +165,61 @@ export function PropertyForm() {
       </Field>
 
       <Field
-        label="Date de cession"
-        htmlFor="property-sale-date"
-        error={errors.saleDate?.message}
+        label="Prix d'acquisition"
+        htmlFor="property-purchase-price"
+        error={errors.purchasePrice?.message}
+        hint="Facultatif : vide reste « inconnu », jamais zéro."
       >
         <input
-          id="property-sale-date"
+          id="property-purchase-price"
+          className={inputClass}
+          inputMode="decimal"
+          autoComplete="off"
+          {...form.register("purchasePrice")}
+        />
+      </Field>
+
+      <Field
+        label="Valeur estimée"
+        htmlFor="property-estimated-value"
+        error={errors.estimatedValue?.message}
+        hint="Dernière estimation connue, datée ci-contre."
+      >
+        <input
+          id="property-estimated-value"
+          className={inputClass}
+          inputMode="decimal"
+          autoComplete="off"
+          {...form.register("estimatedValue")}
+        />
+      </Field>
+
+      <Field
+        label="Estimation au"
+        htmlFor="property-estimated-value-as-of"
+        error={errors.estimatedValueAsOf?.message}
+        hint="Le montant et sa date vont ensemble."
+      >
+        <input
+          id="property-estimated-value-as-of"
           type="date"
           className={inputClass}
-          {...form.register("saleDate")}
+          {...form.register("estimatedValueAsOf")}
+        />
+      </Field>
+
+      <Field
+        label="Objectif de plus-value (%)"
+        htmlFor="property-target-gain-rate"
+        error={errors.targetGainRate?.message}
+        hint="Marge visée au-dessus du seuil de cession sans perte."
+      >
+        <input
+          id="property-target-gain-rate"
+          className={inputClass}
+          inputMode="decimal"
+          autoComplete="off"
+          {...form.register("targetGainRate")}
         />
       </Field>
 
@@ -111,12 +228,19 @@ export function PropertyForm() {
       </Field>
 
       <div className="sm:col-span-2 lg:col-span-3">
-        <SubmitButton label="Ajouter le bien" pending={isSubmitting} />
+        <SubmitButton
+          label={editing ? "Enregistrer le bien" : "Ajouter le bien"}
+          pending={isSubmitting}
+        />
       </div>
 
       <div className="sm:col-span-2 lg:col-span-3">
-        <FormFeedback result={result} successMessage="Bien enregistré." />
+        <FormFeedback
+          result={result}
+          successMessage={editing ? "Bien mis à jour." : "Bien enregistré."}
+        />
       </div>
     </form>
   );
 }
+

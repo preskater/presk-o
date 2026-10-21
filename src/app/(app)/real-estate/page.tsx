@@ -11,7 +11,7 @@ import {
   thClass,
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
-import { formatDateOnly } from "@/lib/dates";
+import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
 import { listTransactions } from "@/modules/budget/repository";
@@ -21,10 +21,12 @@ import {
   toLoanFormInitialValues,
 } from "@/modules/real-estate/loans";
 import type { PropertyOccupancy } from "@/modules/real-estate/domain";
+import { computeSaleAnalysis } from "@/modules/real-estate/valuation";
 import { CashflowForm, type TransactionOption } from "./cashflow-form";
 import { PropertyForm } from "./property-form";
 import { LoanForm } from "./loan-form";
 import { DeleteLoanButton } from "./delete-loan-button";
+import { RemovePropertyButton } from "./remove-property-button";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +48,11 @@ function formatOptionalMoney(amount: Decimal | null, currency: Currency): string
   }
 
   return formatMoney({ amount, currency });
+}
+
+/** Decimal strings for client components: a `Decimal` never crosses the boundary. */
+function decimalText(amount: Decimal | null): string | null {
+  return amount === null ? null : amount.toFixed(2);
 }
 
 export default async function RealEstatePage({
@@ -78,6 +85,7 @@ export default async function RealEstatePage({
 
   const rentedCount = properties.filter((property) => property.occupancy === "RENTED").length;
   const vacantCount = properties.filter((property) => property.occupancy === "VACANT").length;
+  const soldCount = properties.filter((property) => property.saleDate !== null).length;
 
   const propertyOptions = properties.map((property) => ({
     id: property.id,
@@ -85,6 +93,56 @@ export default async function RealEstatePage({
   }));
 
   const propertyNameById = new Map(properties.map((property) => [property.id, property.name]));
+
+  // The removal panel needs the same projection as the detail page: the debt comes
+  // from the loans already loaded above, and the sale formula is the module's own.
+  const loansByProperty = new Map<string, typeof loans>();
+  for (const loan of loans) {
+    const grouped = loansByProperty.get(loan.propertyId) ?? [];
+    grouped.push(loan);
+    loansByProperty.set(loan.propertyId, grouped);
+  }
+
+  const propertyRows = properties.map((property) => {
+    const analysis = computeSaleAnalysis({
+      currency: property.priceCurrency,
+      purchasePrice: property.purchasePrice,
+      estimatedValue: property.estimatedValue,
+      estimatedValueAsOf: property.estimatedValueAsOf,
+      targetGainRate: property.targetGainRate,
+      saleDate: property.saleDate,
+      salePrice: property.salePrice,
+      saleCosts: property.saleCosts,
+      totals: {
+        income: property.income,
+        expenses: property.expenses,
+        currency: property.currency,
+      },
+      loans: loansByProperty.get(property.id) ?? [],
+    });
+
+    return {
+      property,
+      removal: {
+        id: property.id,
+        name: property.name,
+        currency: property.priceCurrency,
+        saleDate: property.saleDate ? toDateOnlyString(property.saleDate) : null,
+        sale:
+          property.saleDate && property.salePrice
+            ? {
+                saleDate: toDateOnlyString(property.saleDate),
+                salePrice: property.salePrice.toFixed(2),
+                saleCosts: property.saleCosts ? property.saleCosts.toFixed(2) : "0",
+              }
+            : null,
+        netInvested: decimalText(analysis.netInvested),
+        outstandingDebt: decimalText(analysis.outstandingDebt),
+        unknownLoanBalances: analysis.unknownLoanBalances,
+        foreignCurrencyLoans: analysis.foreignCurrencyLoans,
+      },
+    };
+  });
 
   const loanCurrencies = Array.from(new Set(loans.map((loan) => loan.currency)));
   const financingTotals = loanCurrencies.map((currency) =>
@@ -305,15 +363,16 @@ export default async function RealEstatePage({
         />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Biens suivis" value={String(properties.length)} />
             <StatCard label="Loués" value={String(rentedCount)} />
             <StatCard label="Vacants" value={String(vacantCount)} />
+            <StatCard label="Vendus" value={String(soldCount)} />
           </div>
 
           <Card
             title="Détail par bien"
-            description="Les flux liés à une transaction ne sont comptés qu'une seule fois. Le financement (prêts) est suivi à part, ci-dessus."
+            description="Cliquez sur un bien pour sa fiche, son historique et l'indicateur de cession. Les flux liés à une transaction ne sont comptés qu'une seule fois ; le financement (prêts) est suivi à part, ci-dessus."
           >
             <TableShell caption="Biens et flux rattachés">
               <thead>
@@ -336,13 +395,21 @@ export default async function RealEstatePage({
                   <th scope="col" className={`${thClass} text-right`}>
                     Solde
                   </th>
+                  <th scope="col" className={thClass}>
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {properties.map((property) => (
+                {propertyRows.map(({ property, removal }) => (
                   <tr key={property.id}>
                     <td className={tdClass}>
-                      <span className="font-medium">{property.name}</span>
+                      <Link
+                        href={`/real-estate/${property.id}`}
+                        className="font-medium underline-offset-2 hover:underline"
+                      >
+                        {property.name}
+                      </Link>
                       {property.address ? (
                         <span className="block text-xs text-zinc-500 dark:text-zinc-400">
                           {property.address}
@@ -351,6 +418,11 @@ export default async function RealEstatePage({
                       {property.purchaseDate ? (
                         <span className="block text-xs text-zinc-500 dark:text-zinc-400">
                           Acquis le {formatDateOnly(property.purchaseDate)}
+                        </span>
+                      ) : null}
+                      {property.saleDate ? (
+                        <span className="mt-1 block text-xs text-rose-700 dark:text-rose-400">
+                          Vendu le {formatDateOnly(property.saleDate)}
                         </span>
                       ) : null}
                     </td>
@@ -380,6 +452,23 @@ export default async function RealEstatePage({
                       }`}
                     >
                       {formatMoney({ amount: property.net, currency: property.currency })}
+                    </td>
+                    <td className={tdClass}>
+                      <span className="flex flex-col items-start gap-1">
+                        <Link
+                          href={`/real-estate/${property.id}`}
+                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        >
+                          Fiche du bien
+                        </Link>
+                        <Link
+                          href={`/real-estate/${property.id}#modifier`}
+                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        >
+                          Modifier
+                        </Link>
+                        <RemovePropertyButton property={removal} />
+                      </span>
                     </td>
                   </tr>
                 ))}

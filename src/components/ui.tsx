@@ -33,15 +33,21 @@ export function Card({
   title,
   description,
   actions,
+  id,
   children,
 }: {
   title?: string;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Optional anchor target, for a link such as `/real-estate/{id}#modifier`. */
+  id?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <section
+      id={id}
+      className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+    >
       {title ? (
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>

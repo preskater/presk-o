@@ -109,7 +109,15 @@ Working today:
   of a property — capital, a dated outstanding-balance snapshot, rate, term, monthly
   payment and insurance — with create, edit and delete, kept deliberately apart from
   the operating figures: financing never enters the property totals, and a missing
-  balance or rate reads "inconnu", never zero.- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
+  balance or rate reads "inconnu", never zero.
+- Property detail page (`/real-estate/{id}`): acquisition price, dated valuation,
+  full history (purchase, cashflows, loans, valuation, sale), and a **sale indicator**
+  computing the net invested capital, the break-even sale price and the target price
+  (break-even + the property's margin). A property can be edited, **sold** (date,
+  price, costs — the page then shows the net proceeds and the gain) or **deleted**
+  with its cashflows and loans; the removal panel asks which of the two is meant.
+  Missing prices, costs or loan balances read "inconnu", never zero.
+- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,
   type, assignee, label, milestone, state, text), and milestones with their due dates
@@ -120,8 +128,9 @@ Working today:
 
 Not implemented yet:
 
-- Properties and cashflow entries cannot be edited or deleted from the interface yet
-  (loans, transactions, budgets, goals, recurring series, accounts and categories all can).
+- Cashflow entries cannot be edited or deleted from the interface yet
+  (properties, loans, transactions, budgets, goals, recurring series, accounts and
+  categories all can).
 - A scheduler entry point for automatic synchronisation (the function exists and
   is idempotent; the trigger is not shipped).
 - Bank connection, payments, accounting, tax advice — permanently out of scope (the

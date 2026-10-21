@@ -367,6 +367,42 @@ asked for: a cascade here would silently change what a property is worth.
   - the operating totals of the property (`income`, `expenses`, `net`) are untouched by
     any loan: financing is a separate ledger of cost, not a movement of the property's
     cashflow.
+- Property valuation and sale indicator (property detail, `/real-estate/{id}`) — a
+  projection built only from the owner's recorded amounts. It forecasts no market
+  price and is not investment advice. Prices use the property's own reference
+  currency; cashflow entries keep theirs, and no figure is ever converted.
+  - *net invested capital* — acquisition price + cumulative operating expenses −
+    cumulative operating income (rents already deducted, financing excluded). It reads
+    **unknown** when the acquisition price is missing or when the cashflow totals are
+    in another currency than the prices; never a zero.
+  - *outstanding debt* — the recorded loan balances in the property's price currency.
+    A property without loans has a known debt of 0. One loan without a recorded balance,
+    or in another currency, makes the total unknown: partial sums understate the debt,
+    and conversion would invent a rate.
+  - *break-even sale price* — net invested capital + outstanding debt, **excluding
+    selling costs** (unknown before the sale). Selling at this price would repay the
+    capital left in the property and its debt.
+  - *target sale price* — break-even price + target margin × net invested capital. The
+    margin is stored per property (`targetGainRate`, 10 % by default, 0–100 %). A
+    non-positive net invested capital uses a zero base, so the target is the break-even
+    price instead of a lower figure derived from a negative base.
+  - *estimated equity* — estimated value − outstanding debt. *Estimated gain* —
+    estimated equity − net invested capital, before selling costs. A dated entry is
+    required: an amount without its date (or a date without its amount) is refused.
+  - *gap to target* — target price − estimated value; positive means the target is still
+    ahead. The status is one of: sold, no estimate, unknown (a missing input), below
+    target, target reached — printed literally, never inferred from a zero.
+  - *recorded sale* — a sale is a dated event, not a deletion: the property keeps its
+    cashflows, loans and history. *net proceeds* = sale price − selling costs −
+    outstanding debt; *gain* = net proceeds − net invested capital. The three sale
+    fields are asked together (costs may be 0), so a sale recorded through this flow
+    always carries its price; a legacy date saved without one reads « prix non
+    renseigné » and can be completed from the detail page. A gain that cannot be
+    computed reads unknown with its reason.
+  - *history* — purchase, cashflows (settled date, else due date, else creation date),
+    loan starts, valuation and sale, most recent first. A cashflow linked to a
+    transaction carries the **transaction's** amount, like the totals, so the history
+    and the figures can never disagree.
 - GitHub issues — only **open** issues and pull requests are kept, and only the
   fields needed to act: title, link, author, **assignees**, **milestone**, comment
   count, labels, dates. No description, no comment body, no source code: reading them
