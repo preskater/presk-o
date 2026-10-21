@@ -35,6 +35,8 @@ export function Card({
   actions,
   id,
   children,
+  collapsible = false,
+  defaultOpen = true,
 }: {
   title?: string;
   description?: ReactNode;
@@ -42,12 +44,42 @@ export function Card({
   /** Optional anchor target, for a link such as `/real-estate/{id}#modifier`. */
   id?: string;
   children: ReactNode;
+  /**
+   * Renders the header as a native `<details>` the reader can fold. Needs a `title`:
+   * without one there is no summary to click, so the card stays a plain section.
+   * Native `<details>` keeps it server-rendered, keyboard- and screen-reader-accessible.
+   */
+  collapsible?: boolean;
+  /** Initial state of a collapsible card; ignored when `collapsible` is false. */
+  defaultOpen?: boolean;
 }) {
+  const surfaceClass =
+    "rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900";
+
+  if (collapsible && title) {
+    return (
+      <details open={defaultOpen} className={`group/card ${surfaceClass}`}>
+        <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-2 p-4 [&::-webkit-details-marker]:hidden">
+          <div className="flex items-start gap-2">
+            <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400 transition-transform group-open/card:rotate-180" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              {title}
+            </h2>
+          </div>
+          {actions}
+        </summary>
+        <div className="px-4 pb-4">
+          {description ? (
+            <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">{description}</p>
+          ) : null}
+          {children}
+        </div>
+      </details>
+    );
+  }
+
   return (
-    <section
-      id={id}
-      className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-    >
+    <section id={id} className={`p-4 ${surfaceClass}`}>
       {title ? (
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -63,6 +95,22 @@ export function Card({
       ) : null}
       {children}
     </section>
+  );
+}
+
+/** Disclosure chevron, rotated by the parent through `group-open:`. */
+export function ChevronDown({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      aria-hidden
+      className={className}
+    >
+      <path d="M5 7.5l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 

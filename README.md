@@ -120,8 +120,11 @@ Working today:
 - GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,
-  type, assignee, label, milestone, state, text), and milestones with their due dates
-  and progress. GitLab stays on project metadata, on purpose.
+  type, assignee, label, milestone, state, text), an actionable **work queue**
+  (unanswered issues, old pull requests, work without a milestone or a label, blocked
+  work, milestones due soon or overdue — each item with its age and a link to the
+  provider), and milestones with their due dates and progress. GitLab stays on project
+  metadata, on purpose.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".

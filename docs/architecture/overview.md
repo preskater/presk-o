@@ -436,6 +436,34 @@ asked for: a cascade here would silently change what a property is worth.
   both figures because they differ: the provider counts everything attached to the
   milestone, this dashboard counts what it stores. `describeMilestoneDue` never calls a
   closed milestone late — its due date is history, not a warning.
+- Work queue (integrations page, « File d'attente », DA-01) — the actionable view: what
+  needs a decision now, computed **only from the issues and milestones already stored**
+  (`buildWorkQueue`, a pure function of the rows and a clock). It reuses the very
+  predicates the explorer and the badges use, so a queue rule and a badge can never
+  disagree, and it reads the **same filtered set** as the explorer, so both views
+  describe the same selection. An issue may appear in several buckets — each is a
+  distinct reason to act — and each bucket is ordered oldest first (backlog order):
+  - *Sans réponse* — an issue open for at least 3 days with zero comments
+    (`isUnanswered`, the same rule as the "Sans réponse" badge).
+  - *Pull requests anciennes* — an open pull request at least 14 days old
+    (`DEFAULT_OLD_PULL_REQUEST_DAYS`). Reported, never judged: an old PR may be a
+    deliberate wait.
+  - *Issues sans jalon* — an issue with no milestone (a pull request is not listed here:
+    the rule is about issues).
+  - *Sans étiquette* — a row with no label at all: no nature, no priority signalled.
+  - *Travaux bloqués* — a row whose labels include one of `BLOCKED_LABELS` (« blocked »,
+    « bloqué », « on hold », « waiting », « en attente »…), matched case-insensitively.
+    The convention is a documented constant, not a per-owner setting.
+  - *Jalons à échéance* — open milestones that are overdue or due within
+    `DEFAULT_MILESTONE_DUE_SOON_DAYS` (7) days, split into the two, soonest first. A
+    closed or undated milestone never appears, exactly as `describeMilestoneDue` reads it.
+  **Review state is deliberately absent.** Whether a pull request awaits review (draft
+  flag, requested reviewers, review decision) is not in the issues payload this
+  integration reads; obtaining it would need a separate bounded `/pulls` call. DA-01
+  makes no such call: the queue signals old pull requests by their age and says so in
+  the card, rather than inventing a review state it cannot know. An issue with no
+  milestone or no label is a real state, never a zero; a milestone without a due date is
+  never "due soon".
 - Budget charts — two, each answering a question the monthly table cannot. Both reuse
   the aggregation rules above instead of defining their own, so a number in a chart
   always equals the same number in a table:
