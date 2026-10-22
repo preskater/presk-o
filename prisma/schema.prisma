@@ -131,6 +131,14 @@ enum IssueKind {
   PULL_REQUEST
 }
 
+/// Coarse client family of a persisted session. Never a user agent, an address or a
+/// fingerprint: it is only there to tell two sessions apart in the account page.
+enum SessionClient {
+  WEB
+  MOBILE
+  UNKNOWN
+}
+
 /// Sole owner of the dashboard. No public sign-up: users are created by the seed script.
 model User {
   id           String   @id @default(cuid())
@@ -155,6 +163,28 @@ model User {
   connections IntegrationConnection[]
   alerts      Alert[]
   alertRules  AlertRule[]
+  sessions    Session[]
+}
+
+/// One signed-in browser session, persisted so the owner can revoke it.
+///
+/// The row never holds the JWT, a token, a full user agent, an address or a
+/// fingerprint: only a coarse client label and the two instants the account page
+/// displays. The token carries this row's `id`; a revoked or missing row makes the
+/// token unusable immediately, without waiting for it to expire.
+model Session {
+  id         String        @id @default(cuid())
+  userId     String
+  client     SessionClient @default(UNKNOWN)
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  /// Last successfully validated request, refreshed at most every few minutes.
+  lastSeenAt DateTime      @default(now()) @db.Timestamptz(3)
+  /// Null while active. Set by a revocation or by a password change; never cleared.
+  revokedAt  DateTime?     @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
 }
 
 /// A manually tracked account. No banking credentials are ever stored here.

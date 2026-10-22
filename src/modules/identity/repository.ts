@@ -40,7 +40,11 @@ export async function countOwners(): Promise<number> {
 }
 
 /**
- * Replaces the password hash of one owner.
+ * Replaces the password hash of one owner and revokes every active session.
+ *
+ * Both writes share one transaction: a change that committed the hash but not the
+ * revocations would still be safe (the token fingerprint no longer matches), but the
+ * account page would keep listing sessions that can never authenticate again.
  *
  * Scoped by identifier, and the number of written rows is returned: a session that
  * outlived its row (the database was recreated, or reset) would otherwise look
@@ -50,12 +54,21 @@ export async function updateOwnerPassword(
   userId: string,
   passwordHash: string,
 ): Promise<boolean> {
-  const { count } = await getPrisma().user.updateMany({
-    where: { id: userId },
-    data: { passwordHash },
-  });
+  const prisma = getPrisma();
+  const now = new Date();
 
-  return count === 1;
+  const [updated] = await prisma.$transaction([
+    prisma.user.updateMany({
+      where: { id: userId },
+      data: { passwordHash },
+    }),
+    prisma.session.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+
+  return updated.count === 1;
 }
 
 /**

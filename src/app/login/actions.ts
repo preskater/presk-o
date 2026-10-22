@@ -4,6 +4,8 @@ import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { signIn } from "@/auth";
+import { getSessionUser } from "@/lib/auth/guard";
+import { revokeSession } from "@/modules/identity/sessions";
 
 /** Sign-in and sign-out actions. Both run on the server only. */
 
@@ -39,6 +41,20 @@ export async function loginAction(formData: FormData): Promise<void> {
 }
 
 export async function signOutAction(): Promise<void> {
+  // Revoke the persisted row too, otherwise a signed-out device would stay listed as
+  // an active session forever. A database failure must not trap the owner on the
+  // page: the cookie is still cleared below.
+  try {
+    const user = await getSessionUser();
+    if (user) {
+      await revokeSession(user.id, user.sessionId);
+    }
+  } catch (error) {
+    console.error(
+      `[signOut] ${error instanceof Error ? error.name : typeof error}`,
+    );
+  }
+
   const { signOut } = await import("@/auth");
   await signOut({ redirectTo: "/login" });
 }
