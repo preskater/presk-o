@@ -1,6 +1,7 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { passwordTag } from "@/lib/auth/password";
+import { hasModule, type ModuleKey } from "@/modules/catalog/catalog";
 import { findOwnerById, listMemberships } from "@/modules/identity/repository";
 import { type ActiveWorkspace, resolveActiveWorkspace } from "@/modules/identity/workspace";
 
@@ -76,11 +77,35 @@ export async function requireUser(): Promise<SessionUser> {
 }
 
 /**
+ * For a module's pages and Server Actions: the session check of `requireUser`, then
+ * the module must be active in the session's workspace. Otherwise the answer is a
+ * 404, as for a page that does not exist: the action writes nothing and the page
+ * reads nothing. The key is a literal at the call site, never a value from the browser.
+ */
+export async function requireModule(key: ModuleKey): Promise<SessionUser> {
+  const user = await requireUser();
+
+  if (!hasModule(user.workspace, key)) {
+    notFound();
+  }
+
+  return user;
+}
+
+/**
  * For Route Handlers: returns `null` instead of redirecting, so the caller can
  * answer with an explicit 401 rather than an HTML login page.
  */
 export async function requireApiUser(): Promise<SessionUser | null> {
   return getSessionUser();
+}
+
+/** Shared 404 body for a module that is not active in the session's workspace. */
+export function moduleUnavailableResponse(): Response {
+  return Response.json(
+    { error: "not_found" },
+    { status: 404, headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /** Shared 401 body: it reveals nothing about the data behind the endpoint. */

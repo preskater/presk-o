@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { MainNav } from "@/components/main-nav";
 import { requireUser } from "@/lib/auth/guard";
+import { moduleNavLinks } from "@/modules/catalog/catalog";
 import { signOutAction } from "../login/actions";
 
 /**
  * Layout for every private page.
  *
  * `requireUser()` re-checks the session on the server: the middleware redirect
- * alone is a convenience, not a security boundary.
+ * alone is a convenience, not a security boundary. The navigation lists only the
+ * modules active in the session's workspace; each module page checks it again.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -20,7 +22,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             Tableau de bord
           </Link>
 
-          <MainNav />
+          <MainNav
+            links={[
+              { href: "/dashboard", label: "Tableau de bord" },
+              ...moduleNavLinks(user.workspace.modules),
+              { href: "/alerts", label: "Alertes" },
+              { href: "/account", label: "Compte" },
+            ]}
+          />
 
           <div className="flex items-center gap-3">
             <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">

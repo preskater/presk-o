@@ -156,6 +156,23 @@ model Workspace {
   updatedAt DateTime      @updatedAt @db.Timestamptz(3)
 
   members WorkspaceMember[]
+  modules WorkspaceModule[]
+}
+
+/// Activation of one catalog module (`src/modules/catalog`) in one workspace. The key is
+/// text, validated against the catalog in code: a new module needs no migration.
+/// Disabling only flips `enabled`: the module's records and its configuration stay.
+model WorkspaceModule {
+  workspaceId String
+  moduleKey   String
+  enabled     Boolean  @default(true)
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, moduleKey])
 }
 
 /// One user's access to one workspace. Without a row here, a user reaches nothing.

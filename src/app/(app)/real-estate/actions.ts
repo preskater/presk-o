@@ -8,7 +8,8 @@ import {
   unexpectedResult,
   type ActionResult,
 } from "@/lib/actions";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { DEFAULT_CURRENCY } from "@/lib/money";
 import { cashflowInputSchema, propertyInputSchema } from "@/modules/real-estate/domain";
 import { createCashflow, createProperty, findProperty } from "@/modules/real-estate/repository";
@@ -22,7 +23,7 @@ import { findTransactionRef } from "@/modules/budget/repository";
  */
 
 export async function createPropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertyInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -49,7 +50,7 @@ export async function createPropertyAction(values: unknown): Promise<ActionResul
 }
 
 export async function createCashflowAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = cashflowInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -68,6 +69,11 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
   let currency = input.currency ?? DEFAULT_CURRENCY;
 
   if (input.transactionId) {
+    // Linking reads the ledger: refused when the budget module is not active here.
+    if (!hasModule(user.workspace, "budget")) {
+      return rejectedResult("transactionId", "Transaction introuvable.");
+    }
+
     const transaction = await findTransactionRef(user.id, input.transactionId);
     if (!transaction) {
       return rejectedResult("transactionId", "Transaction introuvable.");

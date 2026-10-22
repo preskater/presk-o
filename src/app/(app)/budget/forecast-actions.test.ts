@@ -13,7 +13,7 @@ const createTransactionMock = vi.fn();
 const decideRecurringOccurrenceMock = vi.fn();
 const revalidatePathMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/budget/repository", () => ({
   findAccount: (...args: unknown[]) => findAccountMock(...args),
   findCategory: (...args: unknown[]) => findCategoryMock(...args),

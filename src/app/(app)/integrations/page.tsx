@@ -8,7 +8,7 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
 import {
@@ -69,7 +69,7 @@ export default async function IntegrationsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await requireUser();
+  const user = await requireModule("development");
   const params = await searchParams;
   const [connections, issues, milestones, runs] = await Promise.all([
     listConnections(user.id),

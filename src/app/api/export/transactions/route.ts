@@ -1,4 +1,5 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
 import {
   currentMonthKey,
@@ -55,6 +56,9 @@ export async function GET(request: Request): Promise<Response> {
   const user = await requireApiUser();
   if (!user) {
     return unauthorizedResponse();
+  }
+  if (!hasModule(user.workspace, "budget")) {
+    return moduleUnavailableResponse();
   }
 
   const url = new URL(request.url);

@@ -3,22 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const LINKS = [
-  { href: "/dashboard", label: "Tableau de bord" },
-  { href: "/budget", label: "Budget" },
-  { href: "/real-estate", label: "Immobilier" },
-  { href: "/integrations", label: "Intégrations" },
-  { href: "/alerts", label: "Alertes" },
-  { href: "/account", label: "Compte" },
-] as const;
+export type NavLink = { href: string; label: string };
 
-/** Navigation only: no sensitive data and no authorisation decision here. */
-export function MainNav() {
+/**
+ * Navigation only: no sensitive data and no authorisation decision here. The links
+ * arrive already filtered by the server layout from the workspace's active modules.
+ */
+export function MainNav({ links }: { links: readonly NavLink[] }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Navigation principale" className="flex flex-wrap gap-1">
-      {LINKS.map((link) => {
+      {links.map((link) => {
         const isActive =
           pathname === link.href || pathname.startsWith(`${link.href}/`);
 

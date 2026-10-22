@@ -10,7 +10,8 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatDateOnly } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { listTransactions } from "@/modules/budget/repository";
@@ -33,11 +34,14 @@ const OCCUPANCY_LABELS: Record<PropertyOccupancy, string> = {
 };
 
 export default async function RealEstatePage() {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
   const [properties, recentTransactions] = await Promise.all([
     listProperties(user.id),
-    // A cashflow entry can be linked to an operation recorded in the budget.
-    listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT }),
+    // A cashflow entry can be linked to an operation recorded in the budget, when the
+    // budget module is active in this workspace.
+    hasModule(user.workspace, "budget")
+      ? listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT })
+      : [],
   ]);
 
   // Reduced to strings: the form is a client component and never receives a Decimal.
