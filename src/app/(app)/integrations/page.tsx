@@ -41,6 +41,7 @@ import {
   QUEUE_SORT_KEYS,
 } from "@/modules/integrations/work-queue";
 import {
+  listCiRepositories,
   listConnections,
   listIssues,
   listMilestones,
@@ -50,6 +51,7 @@ import {
 } from "@/modules/integrations/repository";
 import { connectProviderAction, syncConnectionAction } from "./actions";
 import { ActivityMetricsCard } from "./activity-metrics-card";
+import { CiStatusCard } from "./ci-status-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
@@ -71,7 +73,7 @@ const STATUS_MESSAGES: Record<string, { tone: "info" | "warning" | "error"; text
 
 /** Read-only scopes, displayed so the requested permissions stay explicit. */
 const SCOPES: Record<IntegrationProvider, string> = {
-  GITHUB: "repo:read, public_repo:read",
+  GITHUB: "repo:read, public_repo:read, actions:read",
   GITLAB: "read_api",
 };
 
@@ -85,13 +87,22 @@ export default async function IntegrationsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const [connections, issues, milestones, runs, projects, cacheEntries] = await Promise.all([
+  const [
+    connections,
+    issues,
+    milestones,
+    runs,
+    projects,
+    cacheEntries,
+    ciRepositories,
+  ] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
     listSyncRuns(user.id),
     listProjects(user.id),
     listProviderCache(user.id),
+    listCiRepositories(user.id),
   ]);
 
   // One clock for the whole page: a connection stale at render is stale everywhere.
@@ -239,6 +250,11 @@ export default async function IntegrationsPage({
           sort={activitySort}
           params={params}
         />
+      ) : null}
+
+      {/* CI is read on the same GitHub connections as issues (GitLab pipelines: not yet). */}
+      {issueConnections.length > 0 ? (
+        <CiStatusCard repositories={ciRepositories} lastSyncedAt={lastIssueSync} />
       ) : null}
 
       <Card
