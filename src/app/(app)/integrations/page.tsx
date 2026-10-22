@@ -29,14 +29,17 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
+import { buildActivityMetrics } from "@/modules/integrations/metrics";
 import { buildWorkQueue } from "@/modules/integrations/work-queue";
 import {
   listConnections,
   listIssues,
   listMilestones,
+  listProjects,
   listSyncRuns,
 } from "@/modules/integrations/repository";
 import { connectProviderAction, syncConnectionAction } from "./actions";
+import { ActivityMetricsCard } from "./activity-metrics-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
@@ -71,11 +74,12 @@ export default async function IntegrationsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const [connections, issues, milestones, runs] = await Promise.all([
+  const [connections, issues, milestones, runs, projects] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
     listSyncRuns(user.id),
+    listProjects(user.id),
   ]);
 
   // One clock for the whole page: a connection stale at render is stale everywhere.
@@ -152,6 +156,20 @@ export default async function IntegrationsPage({
   // the two views disagree about what is being looked at.
   const workQueue = buildWorkQueue(filteredIssues, milestones, { now });
 
+  // Activity metrics describe everything stored, not the explorer's selection: a
+  // median over "unanswered issues only" would be a different, undocumented metric.
+  const activityMetrics = buildActivityMetrics(issues, milestones, projects, {
+    now,
+    issueTracking: issueConnections.length > 0,
+  });
+  const lastSync = connections.reduce<Date | null>(
+    (latest, connection) =>
+      connection.lastSyncedAt && (!latest || connection.lastSyncedAt > latest)
+        ? connection.lastSyncedAt
+        : latest,
+    null,
+  );
+
   return (
     <>
       <PageHeader
@@ -190,6 +208,10 @@ export default async function IntegrationsPage({
           issueTrackingConnected
           lastSyncedAt={lastIssueSync}
         />
+      ) : null}
+
+      {lastSync ? (
+        <ActivityMetricsCard metrics={activityMetrics} lastSyncedAt={lastSync} />
       ) : null}
 
       <Card
