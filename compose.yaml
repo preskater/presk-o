@@ -1,12 +1,11 @@
 # Local development and first deployment.
 #
 # Default (`docker compose up -d`) starts PostgreSQL only, bound to 127.0.0.1.
-# The full stack (`docker compose --profile full up -d --build`) also runs the app and
-# a small reverse proxy that serves it on APP_HOST, the front door (`localhost:8888` by
-# default; see README).
+# The full stack (`docker compose --profile full up -d --build`) also runs the app,
+# published on APP_PORT (3000 by default).
 #
-# PostgreSQL is never published on the public interface: in production only the
-# application container reaches it over the internal network.
+# PostgreSQL is never published on the public interface: only the application
+# stack reaches it over the internal network.
 
 # Shared by the migration service and the application: a single source of truth
 # avoids the two containers disagreeing about the database they use.
@@ -38,6 +37,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - app-network
 
   app:
     profiles: ["full"]
@@ -59,47 +60,19 @@ services:
       # reach. Keep it identical to the origin you actually browse, and to APP_HOST
       # below: cookies are per host, so a mismatch means signing in on one origin and
       # being unknown on the other.
-      AUTH_URL: ${AUTH_URL:-http://dashboard.localhost:8888}
+      # Set AUTH_URL to the exact origin users browse when a stable public
+      # hostname is required. With AUTH_TRUST_HOST=true, leaving it unset lets
+      # Auth.js use the incoming host, including a device's LAN IP.
+      AUTH_URL: ${AUTH_URL:-}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
       NEXT_PUBLIC_DEFAULT_CURRENCY: ${NEXT_PUBLIC_DEFAULT_CURRENCY:-EUR}
       NEXT_PUBLIC_DEFAULT_TIME_ZONE: ${NEXT_PUBLIC_DEFAULT_TIME_ZONE:-Europe/Paris}
-    # The application port itself, published on loopback for debugging only: the
-    # address to browse is the proxy one (localhost:8888, see the `proxy` service).
-    # The comment above still applies in production, where only the proxy is exposed.
+    # Publish the application on the host interface so it can be reached from
+    # outside the container. Set APP_BIND_HOST=127.0.0.1 for local-only access.
     ports:
-      - "127.0.0.1:3000:8888"
-
-  # Serves the application on a hostname instead of a port: the same shape as
-  # production, where a reverse proxy terminates HTTPS in front of the Next.js server.
-  # It belongs to the `full` profile rather than a profile of its own because it
-  # depends on `app`: a second profile only meant that one forgotten flag left the
-  # hostname refusing connections while the rest of the stack looked healthy.
-  proxy:
-    profiles: ["full"]
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_started
-    environment:
-      # The site address the proxy answers for, and the one to type in the browser.
-      # It carries the port on purpose: Caddy listens on the port of its site
-      # address, so it has to match the published port just below. The scheme matters
-      # too: `http://` serves plain HTTP (what you want locally, nothing to trust),
-      # while a bare hostname on a server serves HTTPS with an obtained certificate.
-      # `dashboard.localhost` needs no hosts entry: `.localhost` and its subdomains
-      # are reserved for loopback (RFC 6761) and resolve to this machine on their own.
-      APP_HOST: ${APP_HOST:-http://dashboard.localhost}
-    ports:
-      # The proxy port, which is the one to browse. It is published on all interfaces
-      # so a remote machine can reach it, but only if the firewall allows it.
-      - "${APP_PORT:-8888}:8888"
-    volumes:
-      - ./infra/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
-      # Certificates and account data: only used when APP_HOST has no scheme, but a
-      # proxy that forgets them re-requests a certificate on every restart.
-      - proxy-data:/data
-      - proxy-config:/config
+      - "${APP_BIND_HOST:-0.0.0.0}:${APP_PORT:-3000}:3000"
+    networks:
+      - app-network
 
   # One-shot migration runner: applies pending migrations, then exits. Re-running
   # it is a no-op. The app only starts once it has succeeded, so a failed
@@ -117,6 +90,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: *database-url
+    networks:
+      - app-network
 
   # One-shot owner bootstrap: creates the single owner account from SEED_OWNER_*,
   # or refreshes its name, then exits. It runs on every `up` and is idempotent. The
@@ -148,6 +123,8 @@ services:
       # the Compte page survives a restart.
       SEED_OWNER_FORCE_PASSWORD: ${SEED_OWNER_FORCE_PASSWORD:-false}
     command: ["npx", "prisma", "db", "seed"]
+    networks:
+      - app-network
 
 volumes:
   db-data:
@@ -155,3 +132,7 @@ volumes:
     name: dashboard_db-data
   proxy-data:
   proxy-config:
+
+networks:
+  app-network:
+    driver: bridge

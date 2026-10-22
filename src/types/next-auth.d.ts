@@ -14,11 +14,20 @@ declare module "next-auth" {
      * opened before it.
      */
     passwordTag?: string;
+    /**
+     * Identifier of the persisted session row this token was issued for.
+     *
+     * Not a token: the row holds no secret. `getSessionUser()` refuses a token whose
+     * row is missing, revoked or owned by another account.
+     */
+    sessionId?: string;
   }
 
   interface User {
     /** Set by the credentials provider, carried into the token, never displayed. */
     passwordTag?: string;
+    /** Identifier of the persisted session created at sign-in. */
+    sessionId?: string;
   }
 }
 
@@ -31,5 +40,7 @@ declare module "@auth/core/jwt" {
   interface JWT {
     /** See `Session.passwordTag`. */
     passwordTag?: string;
+    /** Identifier of the persisted session row, set at sign-in only. */
+    sessionId?: string;
   }
 }

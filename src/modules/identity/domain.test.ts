@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  clientKindFromUserAgent,
   PASSWORD_MAX_BYTES,
   PASSWORD_MIN_LENGTH,
   passwordChangeSchema,
@@ -128,5 +129,31 @@ describe("passwordChangeSchema", () => {
     expect(messagesForField({ ...VALID, currentPassword: "" }, "currentPassword")).not.toHaveLength(
       0,
     );
+  });
+});
+
+describe("clientKindFromUserAgent", () => {
+  it("labels a phone or a tablet as mobile", () => {
+    expect(
+      clientKindFromUserAgent(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148",
+      ),
+    ).toBe("MOBILE");
+    expect(
+      clientKindFromUserAgent("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36"),
+    ).toBe("MOBILE");
+  });
+
+  it("labels a desktop browser as web", () => {
+    expect(
+      clientKindFromUserAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+      ),
+    ).toBe("WEB");
+  });
+
+  it("keeps an unknown client unknown instead of guessing", () => {
+    expect(clientKindFromUserAgent(null)).toBe("UNKNOWN");
+    expect(clientKindFromUserAgent("")).toBe("UNKNOWN");
   });
 });
