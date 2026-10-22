@@ -44,3 +44,6 @@ next-env.d.ts
 /exports
 
 /src/generated/prisma
+
+# graphify knowledge graph output
+graphify-out/

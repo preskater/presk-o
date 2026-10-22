@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
 import { MainNav } from "@/components/main-nav";
 import { requireUser } from "@/lib/auth/guard";
 import { signOutAction } from "../login/actions";
@@ -37,6 +38,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
+
+      <KeyboardShortcuts />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6">
         {children}
