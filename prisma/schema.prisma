@@ -497,6 +497,7 @@ model IntegrationConnection {
   snapshots ProjectSnapshot[]
   issues    IssueSnapshot[]
   milestones MilestoneSnapshot[]
+  ciRuns    CiRunSnapshot[]
   syncRuns  SyncRun[]
 
   @@unique([userId, provider, instanceUrl])
@@ -516,6 +517,12 @@ model ProjectSnapshot {
   metrics      Json?
   /// Instant of the last successful fetch for this project.
   fetchedAt    DateTime            @db.Timestamptz(3)
+  /// Last time the CI runs of this repository were requested (DA-03). `null` means
+  /// never requested: outside the bounded selection, or a provider without CI support.
+  ciCheckedAt  DateTime?           @db.Timestamptz(3)
+  /// Safe error code of that request (e.g. "UNAUTHORIZED (HTTP 403)"), `null` when
+  /// the runs were read. A refused read is "unavailable", never "no runs".
+  ciError      String?
   createdAt    DateTime            @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime            @updatedAt @db.Timestamptz(3)
 
@@ -599,6 +606,40 @@ model MilestoneSnapshot {
 
   @@unique([connectionId, externalId])
   @@index([connectionId, state, dueOn])
+}
+
+/// A recent GitHub Actions workflow run of a tracked repository (DA-03).
+///
+/// Current state, not history: each synchronisation keeps only the runs the bounded
+/// fetch returned for a repository it read, and drops the others. Only the fields
+/// displayed are stored — no logs, no job output, no commit content.
+model CiRunSnapshot {
+  id           String              @id @default(cuid())
+  connectionId String
+  provider     IntegrationProvider
+  /// Provider run identifier, kept so a re-run updates instead of duplicating.
+  externalId   String
+  /// Repository full name, for example "owner/repo".
+  repository   String
+  workflowName String
+  branch       String?
+  /// "queued", "in_progress", "completed"..., as the provider reports it.
+  status       String
+  /// "success", "failure", "cancelled"...; `null` while the run is not completed.
+  conclusion   String?
+  url          String
+  /// Instant the run started at the provider.
+  startedAt    DateTime            @db.Timestamptz(3)
+  /// Instant of the provider's last update; the end of a completed run.
+  runUpdatedAt DateTime            @db.Timestamptz(3)
+  fetchedAt    DateTime            @db.Timestamptz(3)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime            @updatedAt @db.Timestamptz(3)
+
+  connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, externalId])
+  @@index([connectionId, repository])
 }
 
 /// One synchronisation attempt, kept so freshness and failures stay observable.

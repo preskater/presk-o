@@ -13,6 +13,8 @@ const saveMilestonesMock = vi.fn();
 const listProjectsMock = vi.fn();
 const listIssuesMock = vi.fn();
 const listMilestonesMock = vi.fn();
+const saveCiRunsMock = vi.fn();
+const listCiRunsMock = vi.fn();
 
 vi.mock("@/modules/integrations/repository", () => ({
   findConnectionForSync: (...args: unknown[]) => findConnectionForSyncMock(...args),
@@ -24,6 +26,7 @@ vi.mock("@/modules/integrations/repository", () => ({
   saveSnapshots: (...args: unknown[]) => saveSnapshotsMock(...args),
   saveIssues: (...args: unknown[]) => saveIssuesMock(...args),
   saveMilestones: (...args: unknown[]) => saveMilestonesMock(...args),
+  saveCiRuns: (...args: unknown[]) => saveCiRunsMock(...args),
 }));
 
 vi.mock("@/modules/integrations/github", () => ({
@@ -35,6 +38,7 @@ vi.mock("@/modules/integrations/github", () => ({
     listProjects: (...args: unknown[]) => listProjectsMock(...args),
     listIssues: (...args: unknown[]) => listIssuesMock(...args),
     listMilestones: (...args: unknown[]) => listMilestonesMock(...args),
+    listCiRuns: (...args: unknown[]) => listCiRunsMock(...args),
   }),
 }));
 
@@ -47,6 +51,7 @@ vi.mock("@/modules/integrations/gitlab", () => ({
     listProjects: (...args: unknown[]) => listProjectsMock(...args),
     listIssues: (...args: unknown[]) => listIssuesMock(...args),
     listMilestones: (...args: unknown[]) => listMilestonesMock(...args),
+    listCiRuns: (...args: unknown[]) => listCiRunsMock(...args),
   }),
 }));
 
@@ -90,6 +95,18 @@ const MILESTONE_OUTCOME = {
   repositoriesFailed: 0,
 };
 
+const CI_OUTCOME = {
+  supported: true,
+  repositories: [
+    { repository: "owner/one", read: true, runs: [] },
+    { repository: "owner/two", read: true, runs: [] },
+  ],
+  fetchedAt: FETCHED_AT,
+  repositoriesScanned: 2,
+  repositoriesSkipped: 0,
+  repositoriesFailed: 0,
+};
+
 describe("synchroniseConnection run history", () => {
   beforeEach(() => {
     findConnectionForSyncMock.mockReset().mockResolvedValue(CONNECTION);
@@ -103,6 +120,8 @@ describe("synchroniseConnection run history", () => {
     listProjectsMock.mockReset().mockResolvedValue(PROJECT_OUTCOME);
     listIssuesMock.mockReset().mockResolvedValue(ISSUE_OUTCOME);
     listMilestonesMock.mockReset().mockResolvedValue(MILESTONE_OUTCOME);
+    listCiRunsMock.mockReset().mockResolvedValue(CI_OUTCOME);
+    saveCiRunsMock.mockReset().mockResolvedValue({ created: 0, updated: 0 });
   });
 
   it("records a successful run with its counters", async () => {
@@ -160,6 +179,69 @@ describe("synchroniseConnection run history", () => {
       "run-1",
       expect.objectContaining({ status: "PARTIAL", failed: 1 }),
     );
+  });
+
+  it("stores CI runs and counts them in the run history", async () => {
+    listCiRunsMock.mockResolvedValue({
+      ...CI_OUTCOME,
+      repositories: [
+        { repository: "owner/one", read: true, runs: [{ externalId: "run-1" }, { externalId: "run-2" }] },
+        { repository: "owner/two", read: true, runs: [] },
+      ],
+    });
+    saveCiRunsMock.mockResolvedValue({ created: 2, updated: 0 });
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    expect(saveCiRunsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: "connection-1",
+        trackedRepositories: ["owner/one", "owner/two"],
+      }),
+    );
+    expect(finishSyncRunMock).toHaveBeenCalledWith(
+      "run-1",
+      expect.objectContaining({ status: "SUCCESS", fetched: 5, created: 4 }),
+    );
+  });
+
+  it("keeps the run successful when a repository's CI is refused", async () => {
+    listCiRunsMock.mockResolvedValue({
+      ...CI_OUTCOME,
+      repositories: [
+        { repository: "owner/one", read: false, errorCode: "UNAUTHORIZED (HTTP 403)" },
+        { repository: "owner/two", read: true, runs: [] },
+      ],
+      repositoriesScanned: 1,
+      repositoriesFailed: 1,
+    });
+
+    const result = await synchroniseConnection("owner-1", "connection-1");
+
+    expect(result).toMatchObject({ status: "SYNCHRONISED" });
+    expect(finishSyncRunMock).toHaveBeenCalledWith(
+      "run-1",
+      expect.objectContaining({ status: "SUCCESS", failed: 0 }),
+    );
+  });
+
+  it("does not touch CI storage for a provider whose CI is not read", async () => {
+    listCiRunsMock.mockResolvedValue({ ...CI_OUTCOME, supported: false, repositories: [] });
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    expect(saveCiRunsMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the run when the CI read hits the rate limit", async () => {
+    listCiRunsMock.mockRejectedValue(
+      new ProviderError("RATE_LIMITED", "Quota GitHub atteint.", { status: 403 }),
+    );
+
+    const result = await synchroniseConnection("owner-1", "connection-1");
+
+    expect(result).toMatchObject({ status: "FAILED", code: "RATE_LIMITED (HTTP 403)" });
+    expect(markSyncSuccessMock).not.toHaveBeenCalled();
   });
 
   it("records a failed run and persists only the safe message", async () => {
