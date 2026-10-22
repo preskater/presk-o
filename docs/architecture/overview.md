@@ -13,7 +13,7 @@ the pages that consume it.
 
 | Module | Responsibility | Key files |
 | --- | --- | --- |
-| `identity` | The single owner account. No public sign-up: the account is created by the seed script. | `repository.ts` |
+| `identity` | The owner account and workspace memberships (roles `OWNER`, `ADMIN`, `MEMBER`, `VIEWER`). No public sign-up: the account and its personal workspace are created by the seed script. | `repository.ts`, `workspace.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
@@ -562,6 +562,12 @@ beside its fields.
   session that outlives a recreated database is treated as signed out (redirect to
   the login page) rather than letting the owner reach pages that read nothing and
   writes that fail on a foreign key.
+- Workspaces: every session resolves exactly one active workspace (`SessionUser.workspace`,
+  with the role held there) from the user's own memberships, server-side only. A user
+  without any membership is refused like a signed-out one, and a workspace id the user
+  is not a member of reads as "not found". The migration gives each existing user a
+  personal workspace (`ws-<userId>`) as `OWNER`; records stay owned by `userId` until
+  the scoping migration (M7-04).
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.

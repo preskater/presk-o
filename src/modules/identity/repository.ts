@@ -1,4 +1,5 @@
 import { getPrisma } from "@/lib/db";
+import { type ActiveWorkspace, defaultWorkspaceId } from "@/modules/identity/workspace";
 
 /**
  * Identity module.
@@ -75,4 +76,41 @@ export async function upsertOwner(input: {
     update: { name: input.name, passwordHash: input.passwordHash },
     select: { id: true, email: true },
   });
+}
+
+/**
+ * The user's memberships, oldest first: the order `resolveActiveWorkspace` relies on
+ * for a stable default. Filtered by user, so another user's workspace never appears.
+ */
+export async function listMemberships(userId: string): Promise<ActiveWorkspace[]> {
+  const rows = await getPrisma().workspaceMember.findMany({
+    where: { userId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { role: true, workspace: { select: { id: true, name: true, kind: true } } },
+  });
+
+  return rows.map(({ role, workspace }) => ({ ...workspace, role }));
+}
+
+/**
+ * Gives the owner their personal workspace. Used by the seed script; idempotent and
+ * writes the same identifiers as the migration backfill, so neither path duplicates
+ * the other.
+ */
+export async function ensureDefaultWorkspace(userId: string): Promise<void> {
+  const workspaceId = defaultWorkspaceId(userId);
+  const prisma = getPrisma();
+
+  await prisma.$transaction([
+    prisma.workspace.upsert({
+      where: { id: workspaceId },
+      create: { id: workspaceId, name: "Personnel", kind: "PERSONAL" },
+      update: {},
+    }),
+    prisma.workspaceMember.upsert({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      create: { id: `wm-${userId}`, workspaceId, userId, role: "OWNER" },
+      update: {},
+    }),
+  ]);
 }

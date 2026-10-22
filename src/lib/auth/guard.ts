@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { passwordTag } from "@/lib/auth/password";
-import { findOwnerById } from "@/modules/identity/repository";
+import { findOwnerById, listMemberships } from "@/modules/identity/repository";
+import { type ActiveWorkspace, resolveActiveWorkspace } from "@/modules/identity/workspace";
 
 /**
  * Server-side authorisation.
@@ -19,11 +20,15 @@ import { findOwnerById } from "@/modules/identity/repository";
  * password? It carries a fingerprint of the hash it was issued for (see
  * `passwordTag`), so changing the password signs out every session opened before
  * it, on every device, not only the one that made the change.
+ *
+ * Every session also resolves exactly one active workspace from the user's own
+ * memberships; a user without any membership is refused like a signed-out one.
  */
 export type SessionUser = {
   id: string;
   email: string;
   name: string | null;
+  workspace: ActiveWorkspace;
 };
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -37,7 +42,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   }
 
   // The token proves its signature, not that the owner still exists.
-  const owner = await findOwnerById(id);
+  const [owner, memberships] = await Promise.all([findOwnerById(id), listMemberships(id)]);
   if (!owner) {
     return null;
   }
@@ -49,7 +54,14 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  return { id, email, name: session.user.name ?? null };
+  // ponytail: always the oldest membership; the switcher (second membership) will pass
+  // the chosen identifier here.
+  const workspace = resolveActiveWorkspace(memberships);
+  if (!workspace) {
+    return null;
+  }
+
+  return { id, email, name: session.user.name ?? null, workspace };
 }
 
 /** For pages: redirects an anonymous visitor to the sign-in page. */
