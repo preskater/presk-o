@@ -631,6 +631,28 @@ Closed issues are deleted at the next run, which only happens when every targete
 repository was read: a repository skipped by the bound, or refused by the provider,
 still has open issues that were not seen.
 
+## Architecture invariants (UX-04)
+
+`src/invariants/` asserts the rules the architecture rests on, each with valid and
+invalid states and a negative control that proves the check can fail. The suite is
+deterministic (fixed seeds, `seededRandom` in `helpers.ts`), network-free and
+database-free, and uses fictitious values only. No property-testing dependency: the
+seeded generator is enough, at the cost of no automatic shrinking of a failing case.
+
+| Invariant | Test |
+| --- | --- |
+| Owner scoping: every repository function opens with a query scoped to `userId` | `owner-scoping.test.ts` (fake client records the first queries; exemptions listed with their reason) |
+| Exact money, month windows that tile the calendar | `money.test.ts` |
+| Cashflow amount XOR linked transaction, counted once | `ledger.test.ts` |
+| Transfers count by sign; the volume is a subset, never extra | `ledger.test.ts` |
+| Idempotent synchronisation, pruning only after a complete run | `sync-idempotence.test.ts` (real save functions, in-memory tables) |
+| Plain DTOs for client forms | `client-boundary.test.ts` |
+| No `Decimal` or `Date` in client props; no server-only import in a client module | `client-props.ts` (compile time, `npm run typecheck`) and `client-boundary.test.ts` |
+
+A new repository function must be owner-scoped or be added to `NOT_OWNER_SCOPED` with
+its reason; a new `"use client"` file must be added to `ClientModules` in
+`client-props.ts`. Both omissions fail the suite.
+
 ## Not implemented in this base
 
 - No bank connector, no payment, no accounting or tax advice. The CSV import is
