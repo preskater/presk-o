@@ -29,6 +29,7 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
+import { buildRepositoryHealth } from "@/modules/integrations/health";
 import { buildActivityMetrics } from "@/modules/integrations/metrics";
 import { buildWorkQueue } from "@/modules/integrations/work-queue";
 import {
@@ -43,6 +44,7 @@ import { ActivityMetricsCard } from "./activity-metrics-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
+import { RepositoryHealthCard } from "./repository-health-card";
 import { WorkQueueCard } from "./work-queue-card";
 
 export const dynamic = "force-dynamic";
@@ -212,6 +214,13 @@ export default async function IntegrationsPage({
 
       {lastSync ? (
         <ActivityMetricsCard metrics={activityMetrics} lastSyncedAt={lastSync} />
+      ) : null}
+
+      {lastSync ? (
+        <RepositoryHealthCard
+          reports={buildRepositoryHealth(projects, milestones, { now })}
+          lastSyncedAt={lastSync}
+        />
       ) : null}
 
       <Card

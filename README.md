@@ -113,8 +113,10 @@ Working today:
   work, milestones due soon or overdue — each item with its age and a link to the
   provider), milestones with their due dates and progress, and bounded **activity
   metrics** (open pull requests, their median age, inactive repositories, open-milestone
-  completion; open-to-merge time and issue throughput shown as unavailable). GitLab
-  stays on project metadata, on purpose.
+  completion; open-to-merge time and issue throughput shown as unavailable), and
+  **repository health** indicators (inactive, issue backlog, overdue milestones, no
+  description, no topics, no default branch — each with its rule and a link to the
+  provider). GitLab stays on project metadata, on purpose.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".

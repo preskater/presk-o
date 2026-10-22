@@ -2,6 +2,7 @@ import {
   assertIssueShape,
   assertMilestoneShape,
   assertProjectShape,
+  descriptionPresence,
   parseProviderInstant,
   parseRetryAfterSeconds,
   ProviderError,
@@ -31,7 +32,7 @@ const API_VERSION = "2022-11-28";
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_MAX_PAGES = 5;
 /** Issues are queried per repository, so the run is bounded. */
-const DEFAULT_MAX_REPOSITORIES = 20;
+export const DEFAULT_MAX_REPOSITORIES = 20;
 const DEFAULT_ISSUE_PAGE_SIZE = 50;
 const DEFAULT_MILESTONE_PAGE_SIZE = 50;
 const MAX_LABELS = 5;
@@ -47,6 +48,8 @@ type GitHubRepository = {
   stargazers_count?: unknown;
   open_issues_count?: unknown;
   pushed_at?: unknown;
+  description?: unknown;
+  topics?: unknown;
 };
 
 /**
@@ -152,6 +155,9 @@ export function normaliseGitHubRepository(
       openIssues:
         typeof repository.open_issues_count === "number" ? repository.open_issues_count : null,
       lastPushAt: repository.pushed_at ?? null,
+      // Repository hygiene (DA-05): presence only, never the text itself.
+      hasDescription: descriptionPresence(repository.description),
+      topicCount: Array.isArray(repository.topics) ? repository.topics.length : null,
     },
   };
 

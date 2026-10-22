@@ -1,5 +1,6 @@
 import {
   assertProjectShape,
+  descriptionPresence,
   parseRetryAfterSeconds,
   ProviderError,
   requestJson,
@@ -30,6 +31,10 @@ type GitLabProject = {
   forks_count?: unknown;
   open_issues_count?: unknown;
   last_activity_at?: unknown;
+  description?: unknown;
+  topics?: unknown;
+  /** Older instances (before 14.5) name the topics this way. */
+  tag_list?: unknown;
 };
 
 /** Normalises the configured instance URL, falling back to gitlab.com. */
@@ -117,6 +122,13 @@ export function normaliseGitLabProject(project: GitLabProject): ProviderProject 
           ? project.open_issues_count
           : null,
       lastActivityAt: project.last_activity_at ?? null,
+      // Repository hygiene (DA-05): presence only, never the text itself.
+      hasDescription: descriptionPresence(project.description),
+      topicCount: Array.isArray(project.topics)
+        ? project.topics.length
+        : Array.isArray(project.tag_list)
+          ? project.tag_list.length
+          : null,
     },
   };
 
