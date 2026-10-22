@@ -497,6 +497,7 @@ model IntegrationConnection {
   snapshots ProjectSnapshot[]
   issues    IssueSnapshot[]
   milestones MilestoneSnapshot[]
+  cacheEntries ProviderCacheEntry[]
   syncRuns  SyncRun[]
 
   @@unique([userId, provider, instanceUrl])
@@ -599,6 +600,36 @@ model MilestoneSnapshot {
 
   @@unique([connectionId, externalId])
   @@index([connectionId, state, dueOn])
+}
+
+/// Cache validators of one per-repository provider request (DA-04).
+///
+/// Not a payload cache: only the validators the provider returned (`ETag`,
+/// `Last-Modified`) and two instants. The rows themselves stay in the snapshot
+/// tables. Validators are not secrets; they are dropped with the connection, on a
+/// token change, and are ignored once older than the cache maximum age.
+model ProviderCacheEntry {
+  id           String   @id @default(cuid())
+  connectionId String
+  /// "issues" or "milestones": what the cached request lists.
+  kind         String
+  /// Repository full name, for example "owner/repo".
+  repository   String
+  /// Cache version and exact request URL (see `cacheResourceKey`).
+  resource     String
+  etag         String?
+  lastModified String?
+  /// Last successful check, full answer or 304.
+  checkedAt    DateTime @db.Timestamptz(3)
+  /// Last time the rows were written from a full answer.
+  changedAt    DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, resource])
+  @@index([connectionId, repository])
 }
 
 /// One synchronisation attempt, kept so freshness and failures stay observable.

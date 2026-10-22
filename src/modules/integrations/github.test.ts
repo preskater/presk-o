@@ -543,3 +543,161 @@ describe("createGitHubAdapter — issues", () => {
     expect((calls[0].init?.headers as Record<string, string>)["PRIVATE-TOKEN"]).toBeUndefined();
   });
 });
+
+describe("createGitHubAdapter — conditional requests", () => {
+  const ISSUES_URL =
+    "https://api.github.com/repos/example-owner/example-project/issues?state=open&sort=created&direction=desc&per_page=50";
+  const ISSUES_RESOURCE = `v1 ${ISSUES_URL}`;
+  const notModified = () => new Response(null, { status: 304 });
+
+  it("sends the stored validator and reports a 304 as not modified, with no rows", async () => {
+    const { impl, calls } = queueFetch([notModified]);
+
+    const outcome = await createGitHubAdapter().listIssues(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl, {
+        cache: new Map([[ISSUES_RESOURCE, { etag: '"abc"', lastModified: "Wed, 30 Sep 2026 10:00:00 GMT" }]]),
+      }),
+    );
+
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers["If-None-Match"]).toBe('"abc"');
+    expect(headers["If-Modified-Since"]).toBe("Wed, 30 Sep 2026 10:00:00 GMT");
+    expect(outcome.issues).toEqual([]);
+    expect(outcome.checks).toEqual([
+      {
+        resource: ISSUES_RESOURCE,
+        repository: "example-owner/example-project",
+        notModified: true,
+        validator: null,
+      },
+    ]);
+    // A 304 is a successful read, not a skipped or failed repository.
+    expect(outcome).toMatchObject({ repositoriesScanned: 1, repositoriesFailed: 0 });
+  });
+
+  it("reads a 200 in full and returns the new validators", async () => {
+    const { impl, calls } = queueFetch([
+      () =>
+        jsonResponse([FICTITIOUS_ISSUE], {
+          headers: { etag: 'W/"v2"', "last-modified": "Thu, 01 Oct 2026 08:00:00 GMT" },
+        }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listIssues(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl, {
+        cache: new Map([[ISSUES_RESOURCE, { etag: '"abc"', lastModified: null }]]),
+      }),
+    );
+
+    expect((calls[0].init?.headers as Record<string, string>)["If-None-Match"]).toBe('"abc"');
+    expect(outcome.issues).toHaveLength(1);
+    expect(outcome.checks).toEqual([
+      {
+        resource: ISSUES_RESOURCE,
+        repository: "example-owner/example-project",
+        notModified: false,
+        validator: { etag: 'W/"v2"', lastModified: "Thu, 01 Oct 2026 08:00:00 GMT" },
+      },
+    ]);
+  });
+
+  it("sends no conditional header without a stored validator", async () => {
+    const { impl, calls } = queueFetch([() => jsonResponse([])]);
+
+    await createGitHubAdapter().listIssues(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers["If-None-Match"]).toBeUndefined();
+    expect(headers["If-Modified-Since"]).toBeUndefined();
+  });
+
+  it("handles mixed answers: one repository unchanged, one changed, one refused", async () => {
+    const { impl } = queueFetch([
+      notModified,
+      () => jsonResponse([FICTITIOUS_ISSUE], { headers: { etag: '"new"' } }),
+      () => jsonResponse({ message: "Not Found" }, { status: 404 }),
+    ]);
+    const unchangedResource = `v1 https://api.github.com/repos/example-owner/unchanged/issues?state=open&sort=created&direction=desc&per_page=50`;
+
+    const outcome = await createGitHubAdapter().listIssues(
+      listIssuesRequest(
+        [
+          project("example-owner/unchanged", "2026-09-30T12:00:00Z"),
+          project("example-owner/changed", "2026-09-30T11:00:00Z"),
+          project("example-owner/gone", "2026-09-30T10:00:00Z"),
+        ],
+        impl,
+        { cache: new Map([[unchangedResource, { etag: '"same"', lastModified: null }]]) },
+      ),
+    );
+
+    expect(outcome.checks.map((check) => [check.repository, check.notModified])).toEqual([
+      ["example-owner/unchanged", true],
+      ["example-owner/changed", false],
+    ]);
+    expect(outcome.issues.map((issue) => issue.repository)).toEqual(["example-owner/changed"]);
+    expect(outcome).toMatchObject({ repositoriesScanned: 2, repositoriesFailed: 1 });
+  });
+
+  it("does not keep a malformed validator from a 200", async () => {
+    const { impl } = queueFetch([
+      () => jsonResponse([], { headers: { etag: "unquoted", "last-modified": "pas une date" } }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listIssues(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(outcome.checks[0]).toMatchObject({ notModified: false, validator: null });
+  });
+
+  it("refuses a 304 to a request that sent no validator: it cannot vouch for stored rows", async () => {
+    const { impl } = queueFetch([notModified]);
+
+    await expect(
+      createGitHubAdapter().listIssues(
+        listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it("keeps no check for a repository whose full answer failed normalisation", async () => {
+    const { impl } = queueFetch([
+      () => jsonResponse([{ ...FICTITIOUS_ISSUE, title: "" }], { headers: { etag: '"x"' } }),
+      () => jsonResponse([], { headers: { etag: '"y"' } }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listIssues(
+      listIssuesRequest(
+        [
+          project("example-owner/broken", "2026-09-30T12:00:00Z"),
+          project("example-owner/fine", "2026-09-30T11:00:00Z"),
+        ],
+        impl,
+      ),
+    );
+
+    expect(outcome.checks.map((check) => check.repository)).toEqual(["example-owner/fine"]);
+    expect(outcome.repositoriesFailed).toBe(1);
+  });
+
+  it("applies the same rules to milestones", async () => {
+    const milestonesResource =
+      "v1 https://api.github.com/repos/example-owner/example-project/milestones?state=all&sort=due_on&direction=asc&per_page=50";
+    const { impl, calls } = queueFetch([notModified]);
+
+    const outcome = await createGitHubAdapter().listMilestones(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl, {
+        cache: new Map([[milestonesResource, { etag: '"m"', lastModified: null }]]),
+      }),
+    );
+
+    expect((calls[0].init?.headers as Record<string, string>)["If-None-Match"]).toBe('"m"');
+    expect(outcome.milestones).toEqual([]);
+    expect(outcome.checks).toEqual([
+      expect.objectContaining({ resource: milestonesResource, notModified: true }),
+    ]);
+  });
+});
