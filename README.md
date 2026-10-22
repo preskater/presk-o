@@ -123,8 +123,10 @@ Working today:
   type, assignee, label, milestone, state, text), an actionable **work queue**
   (unanswered issues, old pull requests, work without a milestone or a label, blocked
   work, milestones due soon or overdue — each item with its age and a link to the
-  provider), and milestones with their due dates and progress. GitLab stays on project
-  metadata, on purpose.
+  provider), and milestones with their due dates and progress. Issue and milestone
+  requests are conditional (`ETag` / `Last-Modified`): an unchanged repository answers
+  304 and is not rewritten, and the page shows when each was checked versus changed.
+  GitLab stays on project metadata, on purpose.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".
@@ -319,7 +321,8 @@ the fictitious values. The ones that matter most:
 | `SEED_OWNER_EMAIL`, `SEED_OWNER_PASSWORD`, `SEED_OWNER_NAME` | Create the single owner account. There is no public sign-up. |
 | `SEED_OWNER_FORCE_PASSWORD` | `true` overwrites the stored hash with `SEED_OWNER_PASSWORD`; left unset, a password changed from the Compte page is kept. |
 | `NEXT_PUBLIC_DEFAULT_CURRENCY`, `NEXT_PUBLIC_DEFAULT_TIME_ZONE` | Interface defaults (`EUR`, `Europe/Paris`); the only variables shipped to the browser. |
-| `APP_HOST`, `PROXY_PORT` | Address and host port served by the proxy (`full` profile). |
+| `APP_BIND_HOST`, `APP_PORT` | Host interface and port published by the Compose application (`0.0.0.0:3000` by default). Use `APP_BIND_HOST=127.0.0.1` for local-only access. |
+| `APP_HOST`, `PROXY_PORT` | Address and host port served by the proxy when that proxy is enabled. |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | Credentials and host port of the local PostgreSQL container. |
 
 The server-only variables are validated by `src/lib/env.ts` on first use: a missing

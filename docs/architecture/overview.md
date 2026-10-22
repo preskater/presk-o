@@ -705,9 +705,63 @@ A single unreadable repository (renamed, moved, deleted) is counted and skipped:
 it must not cost the others. A quota or a revoked token fails the whole run
 instead, because a partial issue list would look complete.
 
-Closed issues are deleted at the next run, which only happens when every targeted
-repository was read: a repository skipped by the bound, or refused by the provider,
-still has open issues that were not seen.
+Closed issues are deleted at the next run **per repository read in full**: the issues
+of that repository the provider no longer reports as open go, and every issue of a
+repository that is no longer tracked goes too. A repository answered 304, skipped by
+the bound or refused by the provider keeps its rows — they are current (304) or
+unknown, never "closed". Milestones follow the same rule.
+
+### Conditional requests (DA-04)
+
+The per-repository issue and milestone requests are **conditional**: the validators
+GitHub returned last time (`ETag` → `If-None-Match`, `Last-Modified` →
+`If-Modified-Since`) are sent back, and a `304 Not Modified` means the stored rows of
+that repository are current. They are then neither re-normalised nor rewritten; only
+the check is recorded. GitHub does not count a 304 against the primary rate limit,
+which is what makes frequent runs cheap. The fetch bounds are unchanged.
+
+Validators live in `ProviderCacheEntry`, one row per connection and resource, keyed by
+`cacheResourceKey` = cache version + exact request URL. They are a separate table
+rather than fields on the snapshot tables because the cached resource is a *list* per
+repository, which may have no snapshot row at all (a repository with no open issue).
+No payload is cached: the rows stay in the snapshot tables. Each entry carries two
+instants, displayed in « Requêtes conditionnelles » on the integrations page:
+`checkedAt` (last successful check, 200 or 304) and `changedAt` (last time its rows
+were written from a full answer).
+
+Validators never vouch for data that is not there:
+
+- They are stored **after** the rows they describe (`saveCacheChecks` runs once
+  `saveIssues` / `saveMilestones` returned). A run that fails halfway keeps at worst an
+  old validator for old rows.
+- A full answer replaces the validators, with nothing when it carried none or carried
+  a malformed one, so a stale validator is never kept. A repository whose answer failed
+  normalisation records no check at all.
+- A 304 to a request that sent no validator is an invalid response, not "unchanged".
+- Stored metadata that is malformed is not sent, and an entry whose rows were last
+  written more than `CACHE_MAX_AGE_DAYS` (7) days ago is **expired**: no validator is
+  sent and the resource is read in full, so every resource is re-read at least weekly
+  whatever the provider says. The page shows such an entry as expired, not current.
+
+Invalidation:
+
+- *Connection removal* — entries cascade with the connection.
+- *Token change* — saving a connection (`upsertConnection`) deletes its entries: a new
+  token may see other repositories, and GitHub validators depend on the credentials.
+- *Bounds change* — the request URL carries `per_page` and the filters, so a changed
+  bound produces a new key and the old validator is never matched; the orphaned entry
+  stops being checked and is dropped after `CACHE_MAX_AGE_DAYS`.
+- *Schema or normalisation change* — bump `CACHE_VERSION`: every key changes and the
+  next run reads everything in full.
+- *Repository no longer tracked* — its entries are dropped at the next run.
+
+Not conditional: the project listing (paginated and sorted by last update, so a page's
+validator says nothing about the next page, and pruning projects needs every page),
+and GitLab (only its project listing is read).
+
+Cache validators are not secrets — they are opaque tags of public-to-the-token
+responses — but they are still read and written server-side only, scoped through the
+owner's connection.
 
 ## Not implemented in this base
 
