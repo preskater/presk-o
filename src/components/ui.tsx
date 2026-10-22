@@ -33,6 +33,7 @@ export function Card({
   title,
   description,
   actions,
+  id,
   children,
   collapsible = false,
   defaultOpen = true,
@@ -40,6 +41,8 @@ export function Card({
   title?: string;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Optional anchor target, for a link such as `/real-estate/{id}#modifier`. */
+  id?: string;
   children: ReactNode;
   /**
    * Renders the header as a native `<details>` the reader can fold. Needs a `title`:
@@ -76,7 +79,7 @@ export function Card({
   }
 
   return (
-    <section className={`p-4 ${surfaceClass}`}>
+    <section id={id} className={`p-4 ${surfaceClass}`}>
       {title ? (
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>

@@ -73,7 +73,9 @@ export function FormFeedback({
   }
 
   if (result.status === "ok") {
-    return <Notice tone="info">{successMessage}</Notice>;
+    // A write may report what it produced (a sale's gain, a cascade deletion): the
+    // server message wins over the generic one, which stays as a fallback.
+    return <Notice tone="info">{result.message ?? successMessage}</Notice>;
   }
 
   return <Notice tone="error">{result.message}</Notice>;

@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { passwordTag } from "@/lib/auth/password";
 import { findActiveSession, touchSession } from "@/modules/identity/sessions";
+import { findOwnerById, listMemberships } from "@/modules/identity/repository";
+import { type ActiveWorkspace, resolveActiveWorkspace } from "@/modules/identity/workspace";
 
 /**
  * Server-side authorisation.
@@ -28,6 +30,9 @@ import { findActiveSession, touchSession } from "@/modules/identity/sessions";
  *
  * A token without a session identifier predates persisted sessions and is refused
  * rather than trusted: the cost is one sign-in.
+ *
+ * Every session also resolves exactly one active workspace from the user's own
+ * memberships; a user without any membership is refused like a signed-out one.
  */
 export type SessionUser = {
   id: string;
@@ -35,6 +40,7 @@ export type SessionUser = {
   name: string | null;
   /** Persisted session making this request; used to revoke the others. */
   sessionId: string;
+  workspace: ActiveWorkspace;
 };
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -56,6 +62,12 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
+  // The token proves its signature, not that the owner still exists.
+  const [owner, memberships] = await Promise.all([findOwnerById(id), listMemberships(id)]);
+  if (!owner) {
+    return null;
+  }
+
   // Nor that it was issued for the password currently in force. A token without a
   // fingerprint predates this check, and is refused rather than trusted: the cost
   // is one sign-in.
@@ -63,10 +75,17 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
+  // ponytail: always the oldest membership; the switcher (second membership) will pass
+  // the chosen identifier here.
+  const workspace = resolveActiveWorkspace(memberships);
+  if (!workspace) {
+    return null;
+  }
+
   // Outside the refusal paths: a rejected token must not look like recent activity.
   await touchSession(sessionId, id, record.lastSeenAt);
 
-  return { id, email, name: session.user.name ?? null, sessionId };
+  return { id, email, name: session.user.name ?? null, sessionId, workspace };
 }
 
 /** For pages: redirects an anonymous visitor to the sign-in page. */
@@ -77,7 +96,7 @@ export async function requireUser(): Promise<SessionUser> {
     redirect("/login");
   }
 
-  return user;
+  return user!;
 }
 
 /**

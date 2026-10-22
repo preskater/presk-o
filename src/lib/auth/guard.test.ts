@@ -4,11 +4,17 @@ import { passwordTag } from "./password";
 const authMock = vi.fn();
 const findActiveSessionMock = vi.fn();
 const touchSessionMock = vi.fn();
-
-vi.mock("@/auth", () => ({ auth: () => authMock() }));
 vi.mock("@/modules/identity/sessions", () => ({
   findActiveSession: (...args: unknown[]) => findActiveSessionMock(...args),
   touchSession: (...args: unknown[]) => touchSessionMock(...args),
+}));
+const findOwnerByIdMock = vi.fn();
+const listMembershipsMock = vi.fn();
+
+vi.mock("@/auth", () => ({ auth: () => authMock() }));
+vi.mock("@/modules/identity/repository", () => ({
+  findOwnerById: (id: string) => findOwnerByIdMock(id),
+  listMemberships: (id: string) => listMembershipsMock(id),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -46,11 +52,16 @@ const validSession = {
  */
 const CURRENT_TAG = passwordTag(owner.passwordHash);
 
+/** The personal workspace the migration gives every existing owner. */
+const personal = { id: "ws-user-1", name: "Personnel", kind: "PERSONAL", role: "OWNER" };
+
 describe("getSessionUser", () => {
   beforeEach(() => {
     authMock.mockReset();
     findActiveSessionMock.mockReset().mockResolvedValue(sessionRecord);
     touchSessionMock.mockReset().mockResolvedValue(undefined);
+    findOwnerByIdMock.mockReset().mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([personal]);
   });
 
   it("returns null without a session, without touching the database", async () => {
@@ -87,6 +98,7 @@ describe("getSessionUser", () => {
       email: owner.email,
       name: owner.name,
       sessionId: sessionRecord.id,
+      workspace: personal,
     });
     // Both checks are scoped to the owner: a foreign row can never satisfy them.
     expect(findActiveSessionMock).toHaveBeenCalledWith(sessionRecord.id, owner.id);
@@ -95,6 +107,19 @@ describe("getSessionUser", () => {
       owner.id,
       sessionRecord.lastSeenAt,
     );
+    expect(findOwnerByIdMock).toHaveBeenCalledWith(owner.id);
+    expect(listMembershipsMock).toHaveBeenCalledWith(owner.id);
+  });
+
+  it("refuses an owner without any workspace membership", async () => {
+    authMock.mockResolvedValue({
+      user: { id: owner.id, email: owner.email },
+      passwordTag: CURRENT_TAG,
+    });
+    findOwnerByIdMock.mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([]);
+
+    expect(await getSessionUser()).toBeNull();
   });
 
   it("refuses a revoked session on the very next request", async () => {
@@ -160,6 +185,8 @@ describe("requireUser", () => {
     authMock.mockReset();
     findActiveSessionMock.mockReset().mockResolvedValue(sessionRecord);
     touchSessionMock.mockReset().mockResolvedValue(undefined);
+    findOwnerByIdMock.mockReset().mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([personal]);
   });
 
   it("redirects an anonymous visitor to the sign-in page", async () => {
@@ -181,6 +208,18 @@ describe("requireUser", () => {
     await expect(requireUser()).resolves.toMatchObject({
       id: owner.id,
       sessionId: sessionRecord.id,
+      workspace: { id: personal.id, role: "OWNER" },
     });
+  });
+
+  it("redirects an owner without any workspace membership", async () => {
+    authMock.mockResolvedValue({
+      user: { id: owner.id, email: owner.email },
+      passwordTag: CURRENT_TAG,
+    });
+    findOwnerByIdMock.mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([]);
+
+    await expect(requireUser()).rejects.toThrow("redirect:/login");
   });
 });
