@@ -3,10 +3,12 @@ import { passwordTag } from "./password";
 
 const authMock = vi.fn();
 const findOwnerByIdMock = vi.fn();
+const listMembershipsMock = vi.fn();
 
 vi.mock("@/auth", () => ({ auth: () => authMock() }));
 vi.mock("@/modules/identity/repository", () => ({
   findOwnerById: (id: string) => findOwnerByIdMock(id),
+  listMemberships: (id: string) => listMembershipsMock(id),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -30,10 +32,15 @@ const owner = {
  */
 const CURRENT_TAG = passwordTag(owner.passwordHash);
 
+/** The personal workspace the migration gives every existing owner. */
+const personal = { id: "ws-user-1", name: "Personnel", kind: "PERSONAL", role: "OWNER" };
+
 describe("getSessionUser", () => {
   beforeEach(() => {
     authMock.mockReset();
     findOwnerByIdMock.mockReset();
+    listMembershipsMock.mockReset();
+    listMembershipsMock.mockResolvedValue([personal]);
   });
 
   it("returns null without a session, without touching the database", async () => {
@@ -61,8 +68,21 @@ describe("getSessionUser", () => {
       id: owner.id,
       email: owner.email,
       name: owner.name,
+      workspace: personal,
     });
     expect(findOwnerByIdMock).toHaveBeenCalledWith(owner.id);
+    expect(listMembershipsMock).toHaveBeenCalledWith(owner.id);
+  });
+
+  it("refuses an owner without any workspace membership", async () => {
+    authMock.mockResolvedValue({
+      user: { id: owner.id, email: owner.email },
+      passwordTag: CURRENT_TAG,
+    });
+    findOwnerByIdMock.mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([]);
+
+    expect(await getSessionUser()).toBeNull();
   });
 
   it("treats a session whose owner row disappeared as signed out", async () => {
@@ -101,6 +121,8 @@ describe("requireUser", () => {
   beforeEach(() => {
     authMock.mockReset();
     findOwnerByIdMock.mockReset();
+    listMembershipsMock.mockReset();
+    listMembershipsMock.mockResolvedValue([personal]);
   });
 
   it("redirects an anonymous visitor to the sign-in page", async () => {
@@ -123,6 +145,20 @@ describe("requireUser", () => {
     });
     findOwnerByIdMock.mockResolvedValue(owner);
 
-    await expect(requireUser()).resolves.toMatchObject({ id: owner.id });
+    await expect(requireUser()).resolves.toMatchObject({
+      id: owner.id,
+      workspace: { id: personal.id, role: "OWNER" },
+    });
+  });
+
+  it("redirects an owner without any workspace membership", async () => {
+    authMock.mockResolvedValue({
+      user: { id: owner.id, email: owner.email },
+      passwordTag: CURRENT_TAG,
+    });
+    findOwnerByIdMock.mockResolvedValue(owner);
+    listMembershipsMock.mockResolvedValue([]);
+
+    await expect(requireUser()).rejects.toThrow("redirect:/login");
   });
 });

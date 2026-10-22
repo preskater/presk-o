@@ -131,6 +131,48 @@ enum IssueKind {
   PULL_REQUEST
 }
 
+/// What a workspace holds. Personal and company data never share one by default.
+enum WorkspaceKind {
+  PERSONAL
+  FAMILY
+  COMPANY
+}
+
+/// Highest first. Only OWNER exists until invitations land (M8-01).
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+/// A space (personal, family, company) whose members share its data.
+/// Records still hang off `User` until the scoping migration (M7-04).
+model Workspace {
+  id        String        @id @default(cuid())
+  name      String
+  kind      WorkspaceKind @default(PERSONAL)
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(3)
+
+  members WorkspaceMember[]
+}
+
+/// One user's access to one workspace. Without a row here, a user reaches nothing.
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
 /// Sole owner of the dashboard. No public sign-up: users are created by the seed script.
 model User {
   id           String   @id @default(cuid())
@@ -155,6 +197,7 @@ model User {
   connections IntegrationConnection[]
   alerts      Alert[]
   alertRules  AlertRule[]
+  memberships WorkspaceMember[]
 }
 
 /// A manually tracked account. No banking credentials are ever stored here.
