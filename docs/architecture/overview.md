@@ -836,6 +836,52 @@ Cache validators are not secrets — they are opaque tags of public-to-the-token
 responses — but they are still read and written server-side only, scoped through the
 owner's connection.
 
+### CI status (DA-03)
+
+GitHub Actions runs are read from the **same bounded repository selection** (at most
+20 repositories, most recently pushed first), with one request each:
+`GET /repos/{owner}/{repo}/actions/runs?per_page=20`, newest first. A run therefore
+costs at most 20 more requests on top of projects, issues and milestones — well under
+the hourly quota of an authenticated token. No other endpoint is called: no jobs, no
+logs, no timing, no re-run (the integration stays read-only; re-running happens on
+GitHub).
+
+The token needs read access to Actions (`actions:read` on a fine-grained token; a
+classic `repo` token already covers it). Unlike issues, a refused CI read **never
+fails the run**: a token may read issues without the Actions permission. A 401/403, a
+404 or an unexpected payload is recorded per repository (`ProjectSnapshot.ciError`,
+safe code only) and the repository is displayed as *CI indisponible* with the reason.
+Only an exhausted quota stops the run, as everywhere else, since every following
+request would fail the same way.
+
+Stored per run (`CiRunSnapshot`), and nothing else: workflow name, branch, status,
+conclusion, link, start and last-update instants. The card, on the integrations page,
+shows the **latest run of each workflow**, failures first (`buildCiOverview`):
+
+- *Échec* — conclusion `failure`, `timed_out` or `startup_failure`.
+- *En cours* — any status other than `completed` (queued, waiting, in progress).
+- *Autre* — completed but neither success nor failure (`cancelled`, `skipped`,
+  `neutral`, `action_required`…), reported as it is rather than counted as either.
+- *Réussi* — conclusion `success`.
+
+Duration is `runUpdatedAt − startedAt` for a completed run: wall-clock time from start
+to the provider's last update, which includes queueing between jobs — not billed time.
+`startedAt` is `run_started_at` (the latest attempt), or `created_at` on payloads
+without it. Three repository states are kept apart and none of them reads as green:
+*CI indisponible* (read refused), *aucune exécution récente* (read, empty page), and
+*not read* (`ciCheckedAt` null: outside the bounded selection). A repository outside
+the selection on a later run keeps its last read, displayed with the last read date.
+
+**GitLab pipelines are not read** in this first pass: the GitLab adapter returns
+`supported: false`, and the card says how many GitLab projects that leaves out.
+
+Retention (DR-05): CI runs are current state, not history. Each read replaces the
+runs of that repository with the page just fetched, a refused read drops them, and
+runs of repositories no longer tracked are dropped, so the table is bounded by
+construction (repositories read × 20 rows) and `db:cleanup` does not need to touch it.
+DA-04 can reuse the adapter method as is: it is a single bounded request per
+repository whose result is already normalised to the stored fields.
+
 ## Not implemented in this base
 
 - No bank connector, no payment, no accounting or tax advice. The CSV import is
