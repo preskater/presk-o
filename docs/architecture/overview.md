@@ -651,7 +651,10 @@ request would fail the same way.
 
 Stored per run (`CiRunSnapshot`), and nothing else: workflow name, branch, status,
 conclusion, link, start and last-update instants. The card, on the integrations page,
-shows the **latest run of each workflow**, failures first (`buildCiOverview`):
+shows the **latest run of each workflow**, most recently started first
+(`buildCiOverview`), so the last runs read first; ties fall back to repository and
+workflow name. Failures are not sorted to the top: a notice above the table counts the
+workflows whose latest run failed, so an older failure stays visible. Outcomes:
 
 - *Échec* — conclusion `failure`, `timed_out` or `startup_failure`.
 - *En cours* — any status other than `completed` (queued, waiting, in progress).

@@ -28,7 +28,7 @@ export type CiRepositoryLike = {
 };
 
 export type CiOverview<TRepository extends CiRepositoryLike> = {
-  /** The latest run of each workflow, failures first. */
+  /** The latest run of each workflow, most recently started first. */
   latest: {
     repository: TRepository;
     run: TRepository["runs"][number];
@@ -44,13 +44,6 @@ export type CiOverview<TRepository extends CiRepositoryLike> = {
 
 /** Conclusions that mean the workflow did not pass and someone should look. */
 const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
-
-const OUTCOME_ORDER: Record<CiOutcome, number> = {
-  failure: 0,
-  running: 1,
-  other: 2,
-  success: 3,
-};
 
 /**
  * A run that is not `completed` is running (queued, waiting, in progress). A
@@ -155,10 +148,13 @@ export function buildCiOverview<TRepository extends CiRepositoryLike>(
     }
   }
 
+  // Most recently started first, so the last runs read first. Ties fall back to the
+  // repository and workflow name, so the order is stable from one render to the next.
   overview.latest.sort(
     (left, right) =>
-      OUTCOME_ORDER[left.outcome] - OUTCOME_ORDER[right.outcome] ||
-      right.run.startedAt.getTime() - left.run.startedAt.getTime(),
+      right.run.startedAt.getTime() - left.run.startedAt.getTime() ||
+      left.repository.repository.localeCompare(right.repository.repository) ||
+      left.run.workflowName.localeCompare(right.run.workflowName),
   );
 
   return overview;

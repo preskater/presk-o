@@ -112,7 +112,7 @@ Working today:
   (unanswered issues, old pull requests, work without a milestone or a label, blocked
   work, milestones due soon or overdue — each item with its age and a link to the
   provider), milestones with their due dates and progress, and **CI status** (the
-  latest GitHub Actions run of each workflow, failures first, linked to GitHub; needs
+  latest GitHub Actions run of each workflow, most recent first, linked to GitHub; needs
   `actions:read` on the token). GitLab stays on project metadata, on purpose —
   pipelines included.
 - Dashboard with indicators derived from real data — including the month's budget
