@@ -16,6 +16,7 @@ import {
   markSyncFailure,
   markSyncSuccess,
   saveCacheChecks,
+  saveCiRuns,
   saveIssues,
   saveMilestones,
   saveSnapshots,
@@ -225,6 +226,33 @@ export async function synchroniseConnection(
       fetched += milestones.milestones.length;
       created += savedMilestones.created;
       updated += savedMilestones.updated;
+    }
+
+    // CI runs (DA-03), same repository selection again. A repository whose CI is
+    // refused is recorded as unavailable on its own and does not make the run partial:
+    // the issues and milestones it was synchronised for were read in full.
+    const ci = await adapter.listCiRuns({
+      token: connection.token,
+      instanceUrl: connection.instanceUrl,
+      owner: connection.externalOwner,
+      projects: outcome.projects,
+      fetchImpl: retryingFetch.fetchImpl,
+    });
+
+    if (ci.supported) {
+      const savedCi = await saveCiRuns({
+        connectionId: connection.id,
+        provider: connection.provider,
+        results: ci.repositories,
+        trackedRepositories,
+        fetchedAt: ci.fetchedAt,
+      });
+      fetched += ci.repositories.reduce(
+        (sum, result) => sum + (result.read ? result.runs.length : 0),
+        0,
+      );
+      created += savedCi.created;
+      updated += savedCi.updated;
     }
 
     // Both scans cover the same repository selection, so their skipped and failed

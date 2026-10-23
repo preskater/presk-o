@@ -3,6 +3,7 @@ import {
   parseRetryAfterSeconds,
   ProviderError,
   requestJson,
+  type CiSyncOutcome,
   type IntegrationAdapter,
   type IssueSyncOutcome,
   type MilestoneSyncOutcome,
@@ -210,6 +211,18 @@ export function createGitLabAdapter(): IntegrationAdapter {
         supported: false,
         milestones: [],
         checks: [],
+        fetchedAt: new Date(),
+        repositoriesScanned: 0,
+        repositoriesSkipped: 0,
+        repositoriesFailed: 0,
+      };
+    },
+
+    // GitLab pipelines are not read yet (DA-03 first pass): the interface says so.
+    async listCiRuns(): Promise<CiSyncOutcome> {
+      return {
+        supported: false,
+        repositories: [],
         fetchedAt: new Date(),
         repositoriesScanned: 0,
         repositoriesSkipped: 0,
