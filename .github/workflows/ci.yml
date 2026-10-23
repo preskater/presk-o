@@ -62,3 +62,27 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # SO-04: a backup counts as verified only once it has been restored. This job dumps a
+  # throwaway database seeded with fictitious data, restores it into another throwaway
+  # container, and checks that corrupt archives are rejected. The dumps stay in a
+  # temporary directory and are never uploaded as artifacts.
+  backup-restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the Prisma client
+        run: npm run db:generate
+
+      - name: Backup, verify and reject corrupt archives
+        run: ./infra/backups/test-backup-cycle.sh
