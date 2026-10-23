@@ -10,7 +10,8 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
@@ -63,11 +64,14 @@ export default async function RealEstatePage({
   const params = await searchParams;
   const editLoanId = typeof params.editLoan === "string" ? params.editLoan : null;
 
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
   const [properties, recentTransactions, loans] = await Promise.all([
     listProperties(user.id),
-    // A cashflow entry can be linked to an operation recorded in the budget.
-    listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT }),
+    // A cashflow entry can be linked to an operation recorded in the budget, when the
+    // budget module is active in this workspace.
+    hasModule(user.workspace, "budget")
+      ? listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT })
+      : [],
     listLoans(user.id),
   ]);
 

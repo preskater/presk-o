@@ -10,7 +10,7 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
@@ -77,7 +77,7 @@ export default async function PropertyDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
   const property = await getPropertyDetail(user.id, id);
 
   if (!property) {

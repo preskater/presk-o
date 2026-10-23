@@ -13,7 +13,7 @@ const getPropertyDetailMock = vi.fn();
 const savePropertySaleMock = vi.fn();
 const revalidatePathMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/real-estate/repository", () => ({
   createProperty: vi.fn(),
   createCashflow: vi.fn(),
