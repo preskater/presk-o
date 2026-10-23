@@ -11,6 +11,7 @@ import {
 import { requireUser } from "@/lib/auth/guard";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
+import { readTableSort } from "@/lib/table-sort";
 import {
   describeInstance,
   describeSyncRun,
@@ -29,8 +30,16 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
-import { buildActivityMetrics } from "@/modules/integrations/metrics";
-import { buildWorkQueue } from "@/modules/integrations/work-queue";
+import {
+  ACTIVITY_SORT_KEYS,
+  buildActivityMetrics,
+  DEFAULT_ACTIVITY_SORT,
+} from "@/modules/integrations/metrics";
+import {
+  buildWorkQueue,
+  DEFAULT_QUEUE_SORT,
+  QUEUE_SORT_KEYS,
+} from "@/modules/integrations/work-queue";
 import {
   listConnections,
   listIssues,
@@ -154,7 +163,15 @@ export default async function IntegrationsPage({
 
   // The queue reads the same filtered set as the explorer, so a filter can never make
   // the two views disagree about what is being looked at.
-  const workQueue = buildWorkQueue(filteredIssues, milestones, { now });
+  // Column sorts live in the URL too, so a sorted view survives a reload.
+  const queueSort = readTableSort(params, "queueSort", QUEUE_SORT_KEYS, DEFAULT_QUEUE_SORT);
+  const activitySort = readTableSort(
+    params,
+    "activitySort",
+    ACTIVITY_SORT_KEYS,
+    DEFAULT_ACTIVITY_SORT,
+  );
+  const workQueue = buildWorkQueue(filteredIssues, milestones, { now, sort: queueSort });
 
   // Activity metrics describe everything stored, not the explorer's selection: a
   // median over "unanswered issues only" would be a different, undocumented metric.
@@ -207,11 +224,18 @@ export default async function IntegrationsPage({
           queue={workQueue}
           issueTrackingConnected
           lastSyncedAt={lastIssueSync}
+          sort={queueSort}
+          params={params}
         />
       ) : null}
 
       {lastSync ? (
-        <ActivityMetricsCard metrics={activityMetrics} lastSyncedAt={lastSync} />
+        <ActivityMetricsCard
+          metrics={activityMetrics}
+          lastSyncedAt={lastSync}
+          sort={activitySort}
+          params={params}
+        />
       ) : null}
 
       <Card

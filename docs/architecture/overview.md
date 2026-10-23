@@ -382,7 +382,11 @@ asked for: a cascade here would silently change what a property is worth.
   predicates the explorer and the badges use, so a queue rule and a badge can never
   disagree, and it reads the **same filtered set** as the explorer, so both views
   describe the same selection. An issue may appear in several buckets — each is a
-  distinct reason to act — and each bucket is ordered oldest first (backlog order):
+  distinct reason to act. Each bucket is sorted by « Ouverte depuis », smallest lapse
+  first (most recently opened first), by default; the column headers (Sujet, Assigné à,
+  Ouverte depuis) switch the column and direction through `?queueSort=<column>.<asc|desc>`.
+  Ties fall back to repository and number, so the order is stable; an unassigned item
+  sorts as an empty name:
   - *Sans réponse* — an issue open for at least 3 days with zero comments
     (`isUnanswered`, the same rule as the "Sans réponse" badge).
   - *Pull requests anciennes* — an open pull request at least 14 days old
@@ -421,7 +425,11 @@ asked for: a cascade here would silently change what a property is worth.
     threshold. The source differs per provider and is not the same signal: GitHub
     `pushed_at` (last push, any branch), GitLab `last_activity_at` (also moved by issue
     and merge request activity). A project without a usable date is listed as
-    *inconnue*, never counted as inactive or active.
+    *inconnue*, never counted as inactive or active. The table lists inactive and
+    undated repositories, sorted by « Dernière activité », smallest lapse first, by
+    default; its headers switch to the repository name or the other direction through
+    `?activitySort=<column>.<asc|desc>`. An undated repository always sorts last: an
+    unknown date is not "the oldest".
   - *Avancement des jalons ouverts* — over open milestones only, the provider's closed
     counters divided by its open + closed counters (the same counters as the milestones
     card, which cover items not followed here). No item attached to any open milestone
