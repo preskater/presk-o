@@ -7,7 +7,8 @@ import type { ProviderIssue, ProviderMilestone, ProviderProject } from "@/module
  * The real `saveSnapshots`, `saveIssues` and `saveMilestones` run against an in-memory
  * stand-in for the three snapshot tables, which honours their unique key
  * (connectionId, externalId). Replaying a run must leave the same rows, report no
- * creation, and prune only what the provider stopped returning.
+ * creation, and prune only what the provider stopped returning — for issues and
+ * milestones, only inside repositories read in full this run (DA-04).
  */
 
 type Row = Record<string, unknown> & { connectionId: string; externalId: string };
@@ -40,10 +41,10 @@ function inMemoryModel(model: string) {
       table(model).set(key, row);
       return row;
     },
-    deleteMany: async ({ where }: { where: { connectionId: string; externalId: { notIn: string[] } } }) => {
+    deleteMany: async ({ where }: { where: Where }) => {
       let count = 0;
       for (const [key, row] of table(model)) {
-        if (row.connectionId === where.connectionId && !where.externalId.notIn.includes(row.externalId)) {
+        if (matches(row, where)) {
           table(model).delete(key);
           count += 1;
         }
@@ -51,6 +52,20 @@ function inMemoryModel(model: string) {
       return { count };
     },
   };
+}
+
+/** The subset of Prisma `where` the save functions use: equality, `in`, `notIn`, `OR`. */
+type Where = { OR?: Where[] } & Record<string, unknown>;
+
+function matches(row: Row, where: Where): boolean {
+  return Object.entries(where).every(([field, condition]) => {
+    if (field === "OR") return (condition as Where[]).some((branch) => matches(row, branch));
+    if (condition !== null && typeof condition === "object") {
+      const { in: included, notIn } = condition as { in?: unknown[]; notIn?: unknown[] };
+      return (!included || included.includes(row[field])) && (!notIn || !notIn.includes(row[field]));
+    }
+    return row[field] === condition;
+  });
 }
 
 vi.mock("@/lib/db", () => ({
@@ -70,11 +85,14 @@ function project(id: string): ProviderProject {
   return { externalId: id, externalUrl: `https://example.test/${id}`, name: `Projet ${id}`, visibility: "private", metrics: { stars: 1 } };
 }
 
-function issue(id: string): ProviderIssue {
+const REPO_A = "fictif/depot-a";
+const REPO_B = "fictif/depot-b";
+
+function issue(id: string, repository = REPO_A): ProviderIssue {
   return {
     externalId: id,
     kind: "ISSUE",
-    repository: "fictif/depot",
+    repository,
     number: Number(id.replace(/\D/g, "")) || 1,
     title: `Ticket ${id}`,
     url: `https://example.test/issues/${id}`,
@@ -88,10 +106,10 @@ function issue(id: string): ProviderIssue {
   } as ProviderIssue;
 }
 
-function milestone(id: string): ProviderMilestone {
+function milestone(id: string, repository = REPO_A): ProviderMilestone {
   return {
     externalId: id,
-    repository: "fictif/depot",
+    repository,
     number: 1,
     title: `Jalon ${id}`,
     state: "open",
@@ -102,11 +120,21 @@ function milestone(id: string): ProviderMilestone {
   };
 }
 
-async function runOnce(projects: string[], issues: string[], milestones: string[], pruneMissing = true) {
+/**
+ * One run. `read` lists the repositories answered in full (their missing items are
+ * closed); `tracked` every repository still followed. A partial run reads fewer.
+ */
+async function runOnce(
+  projects: string[],
+  issues: ProviderIssue[],
+  milestones: ProviderMilestone[],
+  { read = [REPO_A, REPO_B], tracked = [REPO_A, REPO_B], pruneProjects = true } = {},
+) {
+  const common = { connectionId: CONNECTION, provider: "GITHUB" as const, fetchedAt: FETCHED_AT };
   return {
-    projects: await saveSnapshots({ connectionId: CONNECTION, provider: "GITHUB", projects: projects.map(project), fetchedAt: FETCHED_AT, pruneMissing }),
-    issues: await saveIssues({ connectionId: CONNECTION, provider: "GITHUB", issues: issues.map(issue), fetchedAt: FETCHED_AT, pruneMissing }),
-    milestones: await saveMilestones({ connectionId: CONNECTION, provider: "GITHUB", milestones: milestones.map(milestone), fetchedAt: FETCHED_AT, pruneMissing }),
+    projects: await saveSnapshots({ ...common, projects: projects.map(project), pruneMissing: pruneProjects }),
+    issues: await saveIssues({ ...common, issues, readRepositories: read, trackedRepositories: tracked }),
+    milestones: await saveMilestones({ ...common, milestones, readRepositories: read, trackedRepositories: tracked }),
   };
 }
 
@@ -121,9 +149,10 @@ describe("invariant: idempotent synchronisation", () => {
   });
 
   it("replaying the same run changes nothing and creates nothing", async () => {
-    const first = await runOnce(["p1", "p2"], ["i1", "i2", "i3"], ["m1"]);
+    const issues = [issue("i1"), issue("i2"), issue("i3", REPO_B)];
+    const first = await runOnce(["p1", "p2"], issues, [milestone("m1")]);
     const afterFirst = snapshot();
-    const second = await runOnce(["p1", "p2"], ["i1", "i2", "i3"], ["m1"]);
+    const second = await runOnce(["p1", "p2"], issues, [milestone("m1")]);
 
     expect(first.projects).toEqual({ created: 2, updated: 0 });
     expect(second.projects).toEqual({ created: 0, updated: 2 });
@@ -133,8 +162,8 @@ describe("invariant: idempotent synchronisation", () => {
   });
 
   it("a complete run prunes exactly what the provider no longer returns", async () => {
-    await runOnce(["p1", "p2"], ["i1", "i2"], ["m1", "m2"]);
-    await runOnce(["p2", "p3"], ["i2"], ["m2"]);
+    await runOnce(["p1", "p2"], [issue("i1"), issue("i2")], [milestone("m1"), milestone("m2")]);
+    await runOnce(["p2", "p3"], [issue("i2")], [milestone("m2")]);
 
     expect(snapshot()).toEqual({
       projectSnapshot: [`${CONNECTION}/p2`, `${CONNECTION}/p3`],
@@ -143,20 +172,28 @@ describe("invariant: idempotent synchronisation", () => {
     });
   });
 
-  it("a partial run (no pruning) never erases what it did not read", async () => {
-    await runOnce(["p1", "p2"], ["i1", "i2"], ["m1"]);
-    await runOnce(["p1"], ["i1"], [], false);
+  it("a repository not read in full (304, bound, refused) keeps its rows", async () => {
+    await runOnce(["p1"], [issue("a1"), issue("b1", REPO_B)], [milestone("ma"), milestone("mb", REPO_B)]);
+    // Only REPO_A answered in full and nothing changed there; REPO_B was not read.
+    await runOnce(["p1"], [issue("a1")], [milestone("ma")], { read: [REPO_A], pruneProjects: false });
 
-    expect(snapshot().projectSnapshot).toHaveLength(2);
-    expect(snapshot().issueSnapshot).toHaveLength(2);
-    expect(snapshot().milestoneSnapshot).toHaveLength(1);
+    expect(snapshot().issueSnapshot).toEqual([`${CONNECTION}/a1`, `${CONNECTION}/b1`]);
+    expect(snapshot().milestoneSnapshot).toEqual([`${CONNECTION}/ma`, `${CONNECTION}/mb`]);
+  });
+
+  it("a repository no longer tracked loses its rows", async () => {
+    await runOnce(["p1"], [issue("a1"), issue("b1", REPO_B)], [milestone("mb", REPO_B)]);
+    await runOnce(["p1"], [issue("a1")], [], { read: [REPO_A], tracked: [REPO_A] });
+
+    expect(snapshot().issueSnapshot).toEqual([`${CONNECTION}/a1`]);
+    expect(snapshot().milestoneSnapshot).toEqual([]);
   });
 
   it("negative control: without the unique key, the same replay is caught duplicating", async () => {
     brokenUniqueKey = true;
-    await runOnce(["p1", "p2"], [], [], false);
+    await runOnce(["p1", "p2"], [], [], { read: [], pruneProjects: false });
     const afterFirst = snapshot();
-    await runOnce(["p1", "p2"], [], [], false);
+    await runOnce(["p1", "p2"], [], [], { read: [], pruneProjects: false });
 
     expect(snapshot()).not.toEqual(afterFirst);
     expect(snapshot().projectSnapshot).toHaveLength(4);

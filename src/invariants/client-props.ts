@@ -44,6 +44,7 @@ export type ModuleIsPlain<M> = true extends {
 
 export type ClientModules = {
   "src/app/(app)/account/change-password-form.tsx": typeof import("@/app/(app)/account/change-password-form");
+  "src/app/(app)/account/session-buttons.tsx": typeof import("@/app/(app)/account/session-buttons");
   "src/app/(app)/alerts/dismiss-alert-button.tsx": typeof import("@/app/(app)/alerts/dismiss-alert-button");
   "src/app/(app)/alerts/refresh-alerts-button.tsx": typeof import("@/app/(app)/alerts/refresh-alerts-button");
   "src/app/(app)/alerts/rules-form.tsx": typeof import("@/app/(app)/alerts/rules-form");
@@ -71,7 +72,11 @@ export type ClientModules = {
   "src/app/(app)/budget/work-calendar.tsx": typeof import("@/app/(app)/budget/work-calendar");
   "src/app/(app)/integrations/issue-filters-form.tsx": typeof import("@/app/(app)/integrations/issue-filters-form");
   "src/app/(app)/real-estate/cashflow-form.tsx": typeof import("@/app/(app)/real-estate/cashflow-form");
+  "src/app/(app)/real-estate/delete-loan-button.tsx": typeof import("@/app/(app)/real-estate/delete-loan-button");
+  "src/app/(app)/real-estate/loan-form.tsx": typeof import("@/app/(app)/real-estate/loan-form");
   "src/app/(app)/real-estate/property-form.tsx": typeof import("@/app/(app)/real-estate/property-form");
+  "src/app/(app)/real-estate/remove-property-button.tsx": typeof import("@/app/(app)/real-estate/remove-property-button");
+  "src/app/(app)/real-estate/sale-form.tsx": typeof import("@/app/(app)/real-estate/sale-form");
   "src/components/forms.tsx": typeof import("@/components/forms");
   "src/components/main-nav.tsx": typeof import("@/components/main-nav");
 };

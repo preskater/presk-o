@@ -79,6 +79,7 @@ const NOT_OWNER_SCOPED: Record<string, string> = {
   "identity.findOwnerById": "session lookup by the id of a signed token",
   "identity.countOwners": "single-owner bootstrap check",
   "identity.upsertOwner": "seed script, keyed by email",
+  "identity.ensureDefaultWorkspace": "workspace id derived from the owner id; membership keyed by userId",
   // Synchronisation writes run after `findConnectionForSync(userId, id)`, keyed by the
   // connection or run that check returned.
   "integrations.saveSnapshots": "keyed by an owner-checked connection",
@@ -88,9 +89,12 @@ const NOT_OWNER_SCOPED: Record<string, string> = {
   "integrations.markSyncFailure": "keyed by an owner-checked connection",
   "integrations.startSyncRun": "keyed by an owner-checked connection",
   "integrations.finishSyncRun": "keyed by a run started for an owner-checked connection",
+  "integrations.listCacheEntries": "keyed by an owner-checked connection (DA-04 cache)",
+  "integrations.saveCacheChecks": "keyed by an owner-checked connection (DA-04 cache)",
   // Rows already resolved for the owner by the calling action.
   "budget.createImportedTransactions": "rows carry the owner id, validated by the import action",
   "realEstate.createCashflow": "keyed by a property the action found with findProperty(userId, id)",
+  "realEstate.createLoan": "keyed by a property the action found with findProperty(userId, id)",
 };
 
 /**
@@ -128,8 +132,10 @@ function argumentsFor(name: string, fn: (...args: unknown[]) => unknown): unknow
 
 /** A value of the right shape for a field, guessed from its name. */
 function placeholderFor(key: string, date: Date): unknown {
-  if (/amount|rate|hours|target|threshold|principal/i.test(key)) return new Decimal("12.34");
-  if (/date|day|at$|on$|^from$|^to$|^now$|start|end|until/i.test(key)) return date;
+  if (/amount|rate|hours|target|threshold|principal|price|value|cost|balance/i.test(key)) {
+    return new Decimal("12.34");
+  }
+  if (/date|day|at$|on$|asof$|^from$|^to$|^now$|start|end|until/i.test(key)) return date;
   if (/^(is|has)[A-Z]|reconciled|archived|enabled|prune/.test(key)) return false;
   if (/s$/.test(key)) return [];
   if (/currency/i.test(key)) return "EUR";
