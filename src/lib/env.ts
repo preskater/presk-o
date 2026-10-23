@@ -16,7 +16,7 @@ export const publicEnv = publicEnvSchema.parse({
   NEXT_PUBLIC_DEFAULT_TIME_ZONE: process.env.NEXT_PUBLIC_DEFAULT_TIME_ZONE,
 });
 
-const serverEnvSchema = z.object({
+export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   /** PostgreSQL connection string. Server only. */
   DATABASE_URL: z.string().min(1),
