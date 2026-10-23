@@ -35,6 +35,7 @@ import {
   listConnections,
   listIssues,
   listMilestones,
+  listProviderCache,
   listSyncRuns,
 } from "@/modules/integrations/repository";
 import { connectProviderAction, syncConnectionAction } from "./actions";
@@ -42,6 +43,7 @@ import { CiStatusCard } from "./ci-status-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
+import { ProviderCacheCard } from "./provider-cache-card";
 import { WorkQueueCard } from "./work-queue-card";
 
 export const dynamic = "force-dynamic";
@@ -73,11 +75,12 @@ export default async function IntegrationsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const [connections, issues, milestones, runs, ciRepositories] = await Promise.all([
+  const [connections, issues, milestones, runs, cacheEntries, ciRepositories] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
     listSyncRuns(user.id),
+    listProviderCache(user.id),
     listCiRepositories(user.id),
   ]);
 
@@ -438,6 +441,8 @@ export default async function IntegrationsPage({
           </Card>
         </div>
       ) : null}
+
+      {runs.length > 0 ? <ProviderCacheCard entries={cacheEntries} now={now} /> : null}
 
       <IssuesCard
         issues={issues}

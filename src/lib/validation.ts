@@ -108,6 +108,27 @@ export const amount = z
     }
   });
 
+/**
+ * An optional whole number: empty becomes null, otherwise a non-negative integer.
+ * Used by fields such as a loan's term in months — a count, never a decimal.
+ */
+export const optionalInt = z
+  .string()
+  .trim()
+  .nullish()
+  .transform((value, ctx) => {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    if (!/^\d+$/.test(value)) {
+      ctx.addIssue({ code: "custom", message: "Nombre entier attendu." });
+      return z.NEVER;
+    }
+
+    return Number(value);
+  });
+
 /** Same as `amount`, but an empty field means "no amount" rather than an error. */
 export const optionalAmount = z
   .string()

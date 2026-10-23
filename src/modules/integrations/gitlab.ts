@@ -198,6 +198,7 @@ export function createGitLabAdapter(): IntegrationAdapter {
       return {
         supported: false,
         issues: [],
+        checks: [],
         fetchedAt: new Date(),
         repositoriesScanned: 0,
         repositoriesSkipped: 0,
@@ -209,6 +210,7 @@ export function createGitLabAdapter(): IntegrationAdapter {
       return {
         supported: false,
         milestones: [],
+        checks: [],
         fetchedAt: new Date(),
         repositoriesScanned: 0,
         repositoriesSkipped: 0,

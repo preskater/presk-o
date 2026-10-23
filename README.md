@@ -105,7 +105,19 @@ Working today:
   streamed (the decision is documented in the architecture notes). An unknown value
   exports as an empty cell with its reason, never as a zero.
 - Real estate: properties and cashflow entries entered from the real-estate
-  page, occupancy status, totals, due dates.- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
+  page, occupancy status, totals, due dates. A **Financement** card tracks the loans
+  of a property — capital, a dated outstanding-balance snapshot, rate, term, monthly
+  payment and insurance — with create, edit and delete, kept deliberately apart from
+  the operating figures: financing never enters the property totals, and a missing
+  balance or rate reads "inconnu", never zero.
+- Property detail page (`/real-estate/{id}`): acquisition price, dated valuation,
+  full history (purchase, cashflows, loans, valuation, sale), and a **sale indicator**
+  computing the net invested capital, the break-even sale price and the target price
+  (break-even + the property's margin). A property can be edited, **sold** (date,
+  price, costs — the page then shows the net proceeds and the gain) or **deleted**
+  with its cashflows and loans; the removal panel asks which of the two is meant.
+  Missing prices, costs or loan balances read "inconnu", never zero.
+- GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,
   type, assignee, label, milestone, state, text), an actionable **work queue**
@@ -113,16 +125,19 @@ Working today:
   work, milestones due soon or overdue — each item with its age and a link to the
   provider), milestones with their due dates and progress, and **CI status** (the
   latest GitHub Actions run of each workflow, most recent first, linked to GitHub; needs
-  `actions:read` on the token). GitLab stays on project metadata, on purpose —
-  pipelines included.
+  `actions:read` on the token). Issue and milestone requests are conditional (`ETag` /
+  `Last-Modified`): an unchanged repository answers 304 and is not rewritten, and the
+  page shows when each was checked versus changed. GitLab stays on project metadata, on
+  purpose — pipelines included.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".
 
 Not implemented yet:
 
-- Properties and cashflow entries cannot be edited or deleted from the interface yet
-  (transactions, budgets, goals, recurring series, accounts and categories all can).
+- Cashflow entries cannot be edited or deleted from the interface yet
+  (properties, loans, transactions, budgets, goals, recurring series, accounts and
+  categories all can).
 - A scheduler entry point for automatic synchronisation (the function exists and
   is idempotent; the trigger is not shipped).
 - Bank connection, payments, accounting, tax advice — permanently out of scope (the
@@ -308,7 +323,8 @@ the fictitious values. The ones that matter most:
 | `SEED_OWNER_EMAIL`, `SEED_OWNER_PASSWORD`, `SEED_OWNER_NAME` | Create the single owner account. There is no public sign-up. |
 | `SEED_OWNER_FORCE_PASSWORD` | `true` overwrites the stored hash with `SEED_OWNER_PASSWORD`; left unset, a password changed from the Compte page is kept. |
 | `NEXT_PUBLIC_DEFAULT_CURRENCY`, `NEXT_PUBLIC_DEFAULT_TIME_ZONE` | Interface defaults (`EUR`, `Europe/Paris`); the only variables shipped to the browser. |
-| `APP_HOST`, `PROXY_PORT` | Address and host port served by the proxy (`full` profile). |
+| `APP_BIND_HOST`, `APP_PORT` | Host interface and port published by the Compose application (`0.0.0.0:3000` by default). Use `APP_BIND_HOST=127.0.0.1` for local-only access. |
+| `APP_HOST`, `PROXY_PORT` | Address and host port served by the proxy when that proxy is enabled. |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | Credentials and host port of the local PostgreSQL container. |
 
 The server-only variables are validated by `src/lib/env.ts` on first use: a missing

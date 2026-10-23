@@ -1,14 +1,21 @@
-import { ProviderError, type IntegrationAdapter } from "@/modules/integrations/adapter";
+import {
+  ProviderError,
+  type IntegrationAdapter,
+  type ResourceCheck,
+} from "@/modules/integrations/adapter";
 import type { IntegrationProvider, SyncRunStatus } from "@/modules/integrations/domain";
 import { createGitHubAdapter } from "@/modules/integrations/github";
 import { createGitLabAdapter } from "@/modules/integrations/gitlab";
+import { usableValidators } from "@/modules/integrations/cache";
 import { createRetryingFetch, type RetryPolicy } from "@/modules/integrations/retry";
 import {
   findConnectionForSync,
   finishSyncRun,
+  listCacheEntries,
   listConnections,
   markSyncFailure,
   markSyncSuccess,
+  saveCacheChecks,
   saveCiRuns,
   saveIssues,
   saveMilestones,
@@ -149,6 +156,11 @@ export async function synchroniseConnection(
     created += savedProjects.created;
     updated += savedProjects.updated;
 
+    const trackedRepositories = outcome.projects.map((project) => project.name);
+    // Validators that may be sent this run (DA-04): expired or malformed ones are
+    // left out, and the provider then answers in full.
+    const cache = usableValidators(await listCacheEntries(connection.id), new Date());
+
     // Issues come from the projects of the same run: one synchronisation, one view.
     const issues = await adapter.listIssues({
       token: connection.token,
@@ -156,24 +168,33 @@ export async function synchroniseConnection(
       owner: connection.externalOwner,
       projects: outcome.projects,
       fetchImpl: retryingFetch.fetchImpl,
+      cache,
     });
 
-    const savedIssues = await saveIssues({
-      connectionId: connection.id,
-      provider: connection.provider,
-      issues: issues.issues,
-      fetchedAt: issues.fetchedAt,
-      // Pruning removes closed issues, which is what keeps the list actionable. It is
-      // only safe when every targeted repository was read: a repository skipped by the
-      // bound, or refused by the provider, still has open issues that were not seen.
-      pruneMissing:
-        issues.supported &&
-        issues.repositoriesSkipped === 0 &&
-        issues.repositoriesFailed === 0,
-    });
-    fetched += issues.issues.length;
-    created += savedIssues.created;
-    updated += savedIssues.updated;
+    if (issues.supported) {
+      // Pruning removes closed issues from each repository read in full, which is what
+      // keeps the list actionable. A repository answered 304, skipped by the bound or
+      // refused by the provider keeps its rows: they are current or unknown.
+      const savedIssues = await saveIssues({
+        connectionId: connection.id,
+        provider: connection.provider,
+        issues: issues.issues,
+        fetchedAt: issues.fetchedAt,
+        readRepositories: readInFull(issues.checks),
+        trackedRepositories,
+      });
+      // Validators are stored only once the rows they vouch for are written.
+      await saveCacheChecks({
+        connectionId: connection.id,
+        kind: "issues",
+        checks: issues.checks,
+        trackedRepositories,
+        checkedAt: issues.fetchedAt,
+      });
+      fetched += issues.issues.length;
+      created += savedIssues.created;
+      updated += savedIssues.updated;
+    }
 
     // Milestones come from the same repository selection, so the two views describe
     // exactly the same scope.
@@ -183,21 +204,29 @@ export async function synchroniseConnection(
       owner: connection.externalOwner,
       projects: outcome.projects,
       fetchImpl: retryingFetch.fetchImpl,
+      cache,
     });
 
-    const savedMilestones = await saveMilestones({
-      connectionId: connection.id,
-      provider: connection.provider,
-      milestones: milestones.milestones,
-      fetchedAt: milestones.fetchedAt,
-      pruneMissing:
-        milestones.supported &&
-        milestones.repositoriesSkipped === 0 &&
-        milestones.repositoriesFailed === 0,
-    });
-    fetched += milestones.milestones.length;
-    created += savedMilestones.created;
-    updated += savedMilestones.updated;
+    if (milestones.supported) {
+      const savedMilestones = await saveMilestones({
+        connectionId: connection.id,
+        provider: connection.provider,
+        milestones: milestones.milestones,
+        fetchedAt: milestones.fetchedAt,
+        readRepositories: readInFull(milestones.checks),
+        trackedRepositories,
+      });
+      await saveCacheChecks({
+        connectionId: connection.id,
+        kind: "milestones",
+        checks: milestones.checks,
+        trackedRepositories,
+        checkedAt: milestones.fetchedAt,
+      });
+      fetched += milestones.milestones.length;
+      created += savedMilestones.created;
+      updated += savedMilestones.updated;
+    }
 
     // CI runs (DA-03), same repository selection again. A repository whose CI is
     // refused is recorded as unavailable on its own and does not make the run partial:
@@ -215,7 +244,7 @@ export async function synchroniseConnection(
         connectionId: connection.id,
         provider: connection.provider,
         results: ci.repositories,
-        trackedRepositories: outcome.projects.map((project) => project.name),
+        trackedRepositories,
         fetchedAt: ci.fetchedAt,
       });
       fetched += ci.repositories.reduce(
@@ -285,6 +314,11 @@ export async function synchroniseConnection(
       code: safeMessage,
     };
   }
+}
+
+/** Repositories whose resource was read in full (not a 304) this run. */
+function readInFull(checks: readonly ResourceCheck[]): string[] {
+  return checks.filter((check) => !check.notModified).map((check) => check.repository);
 }
 
 /** One run for every connection of the owner; one failure never blocks the others. */

@@ -1,3 +1,8 @@
+import {
+  conditionalHeaders,
+  readValidator,
+  type CacheValidator,
+} from "./cache";
 import type {
   IntegrationProvider,
   ProviderCiRun,
@@ -91,6 +96,25 @@ export type IssueSyncRequest = SyncRequest & {
   maxRepositories?: number;
   /** Upper bound on the issues kept per repository. */
   pageSize?: number;
+  /**
+   * Validators that may be sent this run, by resource key (DA-04). Absent or empty:
+   * every resource is read in full, which is always correct.
+   */
+  cache?: ReadonlyMap<string, CacheValidator>;
+};
+
+/**
+ * One per-repository resource checked successfully this run (DA-04).
+ *
+ * `notModified` means the provider answered 304: the rows stored for that repository
+ * are current and were not sent again. Otherwise the resource was read in full and
+ * `validator` holds what to send next time (`null` when the answer carried none).
+ */
+export type ResourceCheck = {
+  resource: string;
+  repository: string;
+  notModified: boolean;
+  validator: CacheValidator | null;
 };
 
 /** How much of the repository list a bounded scan actually covered. */
@@ -106,13 +130,17 @@ export type RepositoryScanSummary = {
 export type IssueSyncOutcome = RepositoryScanSummary & {
   /** False for a provider whose issues are not tracked; the list is then empty. */
   supported: boolean;
+  /** Issues of the repositories read in full; a 304 repository contributes none. */
   issues: ProviderIssue[];
+  /** Every repository checked successfully, read in full or not modified. */
+  checks: ResourceCheck[];
   fetchedAt: Date;
 };
 
 export type MilestoneSyncOutcome = RepositoryScanSummary & {
   supported: boolean;
   milestones: ProviderMilestone[];
+  checks: ResourceCheck[];
   fetchedAt: Date;
 };
 
@@ -144,21 +172,21 @@ export type JsonResponse<T> = {
  * `classifyError` is provided by the adapter because rate-limit and scope
  * signals differ between providers.
  */
-export async function requestJson<T>(options: {
+type RequestOptions = {
   url: string;
   headers: Record<string, string>;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   classifyError: (response: Response) => ProviderError;
-}): Promise<JsonResponse<T>> {
-  let response: Response;
+};
 
+async function send(options: RequestOptions): Promise<Response> {
   try {
-    response = await options.fetchImpl(options.url, {
+    return await options.fetchImpl(options.url, {
       method: "GET",
       headers: options.headers,
       signal: options.signal,
-      // Synchronisations must never be served from a cache.
+      // Never served from a local HTTP cache: revalidation is explicit (DA-04).
       cache: "no-store",
     });
   } catch (error) {
@@ -170,13 +198,65 @@ export async function requestJson<T>(options: {
       `Le fournisseur est injoignable : ${error instanceof Error ? error.message : "erreur inconnue"}`,
     );
   }
+}
+
+export async function requestJson<T>(options: RequestOptions): Promise<JsonResponse<T>> {
+  const response = await send(options);
 
   if (!response.ok) {
     throw options.classifyError(response);
   }
 
+  return { data: await parseJson<T>(response), response };
+}
+
+export type ConditionalResponse<T> =
+  | { notModified: true; response: Response }
+  | { notModified: false; data: T; response: Response; validator: CacheValidator | null };
+
+/**
+ * `requestJson`, sending the stored validator when there is one (DA-04).
+ *
+ * A 304 is only accepted as an answer to a conditional request: a 304 to a request
+ * that sent no validator cannot vouch for anything stored, so it is an invalid
+ * response, never "unchanged".
+ */
+export async function requestJsonConditional<T>(
+  options: RequestOptions & { validator?: CacheValidator | null },
+): Promise<ConditionalResponse<T>> {
+  const validatorHeaders = conditionalHeaders(options.validator);
+  const response = await send({
+    ...options,
+    headers: { ...options.headers, ...validatorHeaders },
+  });
+
+  if (response.status === 304) {
+    if (Object.keys(validatorHeaders).length === 0) {
+      throw new ProviderError(
+        "INVALID_RESPONSE",
+        "Réponse 304 à une requête non conditionnelle.",
+        { status: 304 },
+      );
+    }
+
+    return { notModified: true, response };
+  }
+
+  if (!response.ok) {
+    throw options.classifyError(response);
+  }
+
+  return {
+    notModified: false,
+    data: await parseJson<T>(response),
+    response,
+    validator: readValidator(response.headers),
+  };
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
   try {
-    return { data: (await response.json()) as T, response };
+    return (await response.json()) as T;
   } catch {
     throw new ProviderError(
       "INVALID_RESPONSE",
