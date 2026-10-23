@@ -13,6 +13,8 @@ const saveMilestonesMock = vi.fn();
 const listProjectsMock = vi.fn();
 const listIssuesMock = vi.fn();
 const listMilestonesMock = vi.fn();
+const listCacheEntriesMock = vi.fn();
+const saveCacheChecksMock = vi.fn();
 
 vi.mock("@/modules/integrations/repository", () => ({
   findConnectionForSync: (...args: unknown[]) => findConnectionForSyncMock(...args),
@@ -24,6 +26,8 @@ vi.mock("@/modules/integrations/repository", () => ({
   saveSnapshots: (...args: unknown[]) => saveSnapshotsMock(...args),
   saveIssues: (...args: unknown[]) => saveIssuesMock(...args),
   saveMilestones: (...args: unknown[]) => saveMilestonesMock(...args),
+  listCacheEntries: (...args: unknown[]) => listCacheEntriesMock(...args),
+  saveCacheChecks: (...args: unknown[]) => saveCacheChecksMock(...args),
 }));
 
 vi.mock("@/modules/integrations/github", () => ({
@@ -73,9 +77,17 @@ const PROJECT_OUTCOME = {
   ],
   fetchedAt: FETCHED_AT,
 };
+/** Both repositories read in full: a 200 each, with a fictitious validator. */
+const fullCheck = (kind: string, repository: string) => ({
+  resource: `v1 https://api.example.test/repos/${repository}/${kind}`,
+  repository,
+  notModified: false,
+  validator: { etag: `"${kind}-${repository}"`, lastModified: null },
+});
 const ISSUE_OUTCOME = {
   supported: true,
   issues: [{ externalId: "issue-1" }],
+  checks: [fullCheck("issues", "owner/one"), fullCheck("issues", "owner/two")],
   fetchedAt: FETCHED_AT,
   repositoriesScanned: 2,
   repositoriesSkipped: 0,
@@ -84,6 +96,7 @@ const ISSUE_OUTCOME = {
 const MILESTONE_OUTCOME = {
   supported: true,
   milestones: [],
+  checks: [fullCheck("milestones", "owner/one"), fullCheck("milestones", "owner/two")],
   fetchedAt: FETCHED_AT,
   repositoriesScanned: 2,
   repositoriesSkipped: 0,
@@ -103,6 +116,8 @@ describe("synchroniseConnection run history", () => {
     listProjectsMock.mockReset().mockResolvedValue(PROJECT_OUTCOME);
     listIssuesMock.mockReset().mockResolvedValue(ISSUE_OUTCOME);
     listMilestonesMock.mockReset().mockResolvedValue(MILESTONE_OUTCOME);
+    listCacheEntriesMock.mockReset().mockResolvedValue([]);
+    saveCacheChecksMock.mockReset().mockResolvedValue(undefined);
   });
 
   it("records a successful run with its counters", async () => {
@@ -160,6 +175,101 @@ describe("synchroniseConnection run history", () => {
       "run-1",
       expect.objectContaining({ status: "PARTIAL", failed: 1 }),
     );
+  });
+
+  it("sends only the validators that are neither expired nor malformed", async () => {
+    const now = Date.now();
+    listCacheEntriesMock.mockResolvedValue([
+      {
+        resource: "v1 fresh",
+        etag: '"fresh"',
+        lastModified: null,
+        checkedAt: new Date(now),
+        changedAt: new Date(now - 60 * 60 * 1000),
+      },
+      {
+        resource: "v1 expired",
+        etag: '"expired"',
+        lastModified: null,
+        checkedAt: new Date(now),
+        changedAt: new Date(now - 30 * 24 * 60 * 60 * 1000),
+      },
+      {
+        resource: "v1 malformed",
+        etag: "not-quoted",
+        lastModified: "not a date",
+        checkedAt: new Date(now),
+        changedAt: new Date(now),
+      },
+    ]);
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    const cache = listIssuesMock.mock.calls[0][0].cache as Map<string, unknown>;
+    expect([...cache.keys()]).toEqual(["v1 fresh"]);
+    expect(listMilestonesMock.mock.calls[0][0].cache).toBe(cache);
+  });
+
+  it("prunes only the repositories read in full, never one answered 304", async () => {
+    listIssuesMock.mockResolvedValue({
+      ...ISSUE_OUTCOME,
+      checks: [
+        fullCheck("issues", "owner/one"),
+        { ...fullCheck("issues", "owner/two"), notModified: true, validator: null },
+      ],
+    });
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    expect(saveIssuesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        readRepositories: ["owner/one"],
+        trackedRepositories: ["owner/one", "owner/two"],
+      }),
+    );
+  });
+
+  it("stores the validators only after the rows they vouch for", async () => {
+    const order: string[] = [];
+    saveIssuesMock.mockImplementation(async () => {
+      order.push("issues");
+      return { created: 0, updated: 1 };
+    });
+    saveCacheChecksMock.mockImplementation(async (input: { kind: string }) => {
+      order.push(`cache:${input.kind}`);
+    });
+    saveMilestonesMock.mockImplementation(async () => {
+      order.push("milestones");
+      return { created: 1, updated: 0 };
+    });
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    expect(order).toEqual(["issues", "cache:issues", "milestones", "cache:milestones"]);
+  });
+
+  it("stores no validator when the rows could not be saved", async () => {
+    saveIssuesMock.mockRejectedValue(new Error("database unavailable"));
+
+    const result = await synchroniseConnection("owner-1", "connection-1");
+
+    expect(result).toMatchObject({ status: "FAILED" });
+    expect(saveCacheChecksMock).not.toHaveBeenCalled();
+  });
+
+  it("touches neither rows nor validators for a provider whose issues are not read", async () => {
+    listIssuesMock.mockResolvedValue({ ...ISSUE_OUTCOME, supported: false, issues: [], checks: [] });
+    listMilestonesMock.mockResolvedValue({
+      ...MILESTONE_OUTCOME,
+      supported: false,
+      checks: [],
+    });
+
+    await synchroniseConnection("owner-1", "connection-1");
+
+    expect(saveIssuesMock).not.toHaveBeenCalled();
+    expect(saveMilestonesMock).not.toHaveBeenCalled();
+    expect(saveCacheChecksMock).not.toHaveBeenCalled();
   });
 
   it("records a failed run and persists only the safe message", async () => {

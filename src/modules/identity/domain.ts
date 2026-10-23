@@ -72,3 +72,23 @@ export const passwordChangeSchema = z
   });
 
 export type PasswordChangeInput = z.infer<typeof passwordChangeSchema>;
+
+/** Coarse client families of a persisted session (matches the Prisma enum). */
+export type SessionClientKind = "WEB" | "MOBILE" | "UNKNOWN";
+
+/**
+ * Client family of a sign-in, from the request's User-Agent header.
+ *
+ * The header is read once and never stored: only this coarse label is kept, so two
+ * sessions stay distinguishable without keeping anything that could fingerprint a
+ * device.
+ */
+export function clientKindFromUserAgent(
+  userAgent: string | null | undefined,
+): SessionClientKind {
+  if (!userAgent) {
+    return "UNKNOWN";
+  }
+
+  return /Mobile|Android|iPhone|iPad|iPod/i.test(userAgent) ? "MOBILE" : "WEB";
+}

@@ -131,6 +131,14 @@ enum IssueKind {
   PULL_REQUEST
 }
 
+/// Coarse client family of a persisted session. Never a user agent, an address or a
+/// fingerprint: it is only there to tell two sessions apart in the account page.
+enum SessionClient {
+  WEB
+  MOBILE
+  UNKNOWN
+}
+
 /// What a workspace holds. Personal and company data never share one by default.
 enum WorkspaceKind {
   PERSONAL
@@ -215,6 +223,28 @@ model User {
   alerts      Alert[]
   alertRules  AlertRule[]
   memberships WorkspaceMember[]
+  sessions    Session[]
+}
+
+/// One signed-in browser session, persisted so the owner can revoke it.
+///
+/// The row never holds the JWT, a token, a full user agent, an address or a
+/// fingerprint: only a coarse client label and the two instants the account page
+/// displays. The token carries this row's `id`; a revoked or missing row makes the
+/// token unusable immediately, without waiting for it to expire.
+model Session {
+  id         String        @id @default(cuid())
+  userId     String
+  client     SessionClient @default(UNKNOWN)
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  /// Last successfully validated request, refreshed at most every few minutes.
+  lastSeenAt DateTime      @default(now()) @db.Timestamptz(3)
+  /// Null while active. Set by a revocation or by a password change; never cleared.
+  revokedAt  DateTime?     @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
 }
 
 /// A manually tracked account. No banking credentials are ever stored here.
@@ -619,6 +649,7 @@ model IntegrationConnection {
   snapshots ProjectSnapshot[]
   issues    IssueSnapshot[]
   milestones MilestoneSnapshot[]
+  cacheEntries ProviderCacheEntry[]
   syncRuns  SyncRun[]
 
   @@unique([userId, provider, instanceUrl])
@@ -721,6 +752,36 @@ model MilestoneSnapshot {
 
   @@unique([connectionId, externalId])
   @@index([connectionId, state, dueOn])
+}
+
+/// Cache validators of one per-repository provider request (DA-04).
+///
+/// Not a payload cache: only the validators the provider returned (`ETag`,
+/// `Last-Modified`) and two instants. The rows themselves stay in the snapshot
+/// tables. Validators are not secrets; they are dropped with the connection, on a
+/// token change, and are ignored once older than the cache maximum age.
+model ProviderCacheEntry {
+  id           String   @id @default(cuid())
+  connectionId String
+  /// "issues" or "milestones": what the cached request lists.
+  kind         String
+  /// Repository full name, for example "owner/repo".
+  repository   String
+  /// Cache version and exact request URL (see `cacheResourceKey`).
+  resource     String
+  etag         String?
+  lastModified String?
+  /// Last successful check, full answer or 304.
+  checkedAt    DateTime @db.Timestamptz(3)
+  /// Last time the rows were written from a full answer.
+  changedAt    DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, resource])
+  @@index([connectionId, repository])
 }
 
 /// One synchronisation attempt, kept so freshness and failures stay observable.
