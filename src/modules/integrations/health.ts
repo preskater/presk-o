@@ -44,7 +44,8 @@ export type HealthProject = {
 export type HealthMilestone = MilestoneLike & { repository: string };
 
 type Evaluation =
-  | { state: "flagged"; detail: string }
+  /** `order` sorts the flagged list ascending when set; the name breaks ties. */
+  | { state: "flagged"; detail: string; order?: number }
   | { state: "fine" }
   | { state: "unavailable"; reason: string };
 
@@ -53,7 +54,7 @@ export type IndicatorReport<TProject extends HealthProject = HealthProject> = {
   label: string;
   /** The rule, in one sentence, as displayed. */
   rule: string;
-  flagged: { project: TProject; detail: string }[];
+  flagged: { project: TProject; detail: string; order?: number }[];
   unavailable: { project: TProject; reason: string }[];
   fineCount: number;
 };
@@ -77,7 +78,8 @@ function evaluateInactive(project: HealthProject, now: Date, inactiveDays: numbe
 
   const idleDays = ageInDays(lastActivity, now);
   return idleDays >= inactiveDays
-    ? { state: "flagged", detail: `Aucune activité depuis ${idleDays} j.` }
+    ? // Shortest inactivity first: the repositories that just went quiet lead.
+      { state: "flagged", detail: `Aucune activité depuis ${idleDays} j.`, order: idleDays }
     : { state: "fine" };
 }
 
@@ -213,6 +215,23 @@ export function milestoneScope(
   return scope;
 }
 
+/**
+ * The repositories an indicator could not judge, one entry per distinct reason, in
+ * the order the reasons first appear: a shared reason is stated once, not after
+ * every repository.
+ */
+export function groupUnavailable<TProject extends HealthProject>(
+  unavailable: readonly { project: TProject; reason: string }[],
+): { reason: string; projects: TProject[] }[] {
+  const groups = new Map<string, TProject[]>();
+
+  for (const { project, reason } of unavailable) {
+    groups.set(reason, [...(groups.get(reason) ?? []), project]);
+  }
+
+  return [...groups].map(([reason, projects]) => ({ reason, projects }));
+}
+
 export function buildRepositoryHealth<TProject extends HealthProject>(
   projects: readonly TProject[],
   milestones: readonly HealthMilestone[],
@@ -274,7 +293,7 @@ export function buildRepositoryHealth<TProject extends HealthProject>(
       const evaluation = definition.evaluate(project);
 
       if (evaluation.state === "flagged") {
-        report.flagged.push({ project, detail: evaluation.detail });
+        report.flagged.push({ project, detail: evaluation.detail, order: evaluation.order });
       } else if (evaluation.state === "unavailable") {
         report.unavailable.push({ project, reason: evaluation.reason });
       } else {
@@ -282,7 +301,10 @@ export function buildRepositoryHealth<TProject extends HealthProject>(
       }
     }
 
-    report.flagged.sort((left, right) => left.project.name.localeCompare(right.project.name));
+    report.flagged.sort(
+      (left, right) =>
+        (left.order ?? 0) - (right.order ?? 0) || left.project.name.localeCompare(right.project.name),
+    );
     return report;
   });
 }

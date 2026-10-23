@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRepositoryHealth,
   DEFAULT_BACKLOG_THRESHOLD,
+  groupUnavailable,
   HEALTH_INDICATORS,
   milestoneScope,
   type HealthIndicator,
@@ -109,6 +110,22 @@ describe("inactive", () => {
 
     expect(entry.flagged.map((row) => row.project.name)).toEqual(["acme/quiet"]);
     expect(entry.fineCount).toBe(1);
+  });
+
+  it("lists the shortest inactivity first, the name breaking ties", () => {
+    const entry = report("inactive", [
+      project({ name: "acme/ancient" }, { lastPushAt: daysAgo(200) }),
+      project({ name: "acme/b-recent" }, { lastPushAt: daysAgo(31) }),
+      project({ name: "acme/a-recent" }, { lastPushAt: daysAgo(31) }),
+      project({ name: "acme/mid" }, { lastPushAt: daysAgo(60) }),
+    ]);
+
+    expect(entry.flagged.map((row) => row.project.name)).toEqual([
+      "acme/a-recent",
+      "acme/b-recent",
+      "acme/mid",
+      "acme/ancient",
+    ]);
   });
 
   it("reads GitLab's last activity", () => {
@@ -230,5 +247,25 @@ describe("missingMetadata", () => {
     delete withoutKey.metrics!.defaultBranch;
 
     expect(report("missingMetadata", [withoutKey]).unavailable).toHaveLength(1);
+  });
+});
+
+describe("groupUnavailable", () => {
+  it("states each reason once, with every repository it concerns, in first-seen order", () => {
+    const projects = Array.from({ length: 22 }, (_, index) =>
+      project({ name: `acme/repo-${index}` }, { lastPushAt: daysAgo(index) }),
+    );
+    const entry = report("staleMilestones", [...projects, project({ name: "group/lab", provider: "GITLAB" })]);
+
+    const groups = groupUnavailable(entry.unavailable);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].projects.map((row) => row.name)).toEqual(["acme/repo-20", "acme/repo-21"]);
+    expect(groups[1].projects.map((row) => row.name)).toEqual(["group/lab"]);
+    expect(new Set(groups.map((group) => group.reason)).size).toBe(2);
+  });
+
+  it("is empty when every repository was judged", () => {
+    expect(groupUnavailable([])).toEqual([]);
   });
 });

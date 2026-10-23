@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Badge, Card, ChevronDown, Notice } from "@/components/ui";
 import { formatInstant } from "@/lib/dates";
-import type { IndicatorReport } from "@/modules/integrations/health";
+import { groupUnavailable, type IndicatorReport } from "@/modules/integrations/health";
 import type { ProjectSummary } from "@/modules/integrations/repository";
 
 /**
@@ -82,14 +82,11 @@ export function RepositoryHealthCard({
                 </p>
               )}
 
-              {report.unavailable.length > 0 ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  Non évalués :{" "}
-                  {report.unavailable
-                    .map(({ project, reason }) => `${project.name} (${reason})`)
-                    .join(" ; ")}
+              {groupUnavailable(report.unavailable).map(({ reason, projects }) => (
+                <p key={reason} className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Non évalués : {projects.map((project) => project.name).join(", ")} — {reason}
                 </p>
-              ) : null}
+              ))}
             </div>
           </details>
         ))}
