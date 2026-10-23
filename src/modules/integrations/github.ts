@@ -6,12 +6,15 @@ import {
   parseRetryAfterSeconds,
   ProviderError,
   requestJson,
+  requestJsonConditional,
   type IntegrationAdapter,
   type IssueSyncOutcome,
   type IssueSyncRequest,
   type MilestoneSyncOutcome,
+  type ResourceCheck,
   type SyncRequest,
 } from "./adapter";
+import { cacheResourceKey } from "./cache";
 import type {
   ProviderIssue,
   ProviderMilestone,
@@ -241,6 +244,7 @@ export function createGitHubAdapter(): IntegrationAdapter {
       );
 
       const issues: ProviderIssue[] = [];
+      const checks: ResourceCheck[] = [];
       let scanned = 0;
       let failed = 0;
       let lastError: ProviderError | null = null;
@@ -248,26 +252,38 @@ export function createGitHubAdapter(): IntegrationAdapter {
       for (const repository of repositories) {
         try {
           // `sort=created` keeps the newest first, which is what the dashboard shows.
-          const { data, response }: { data: unknown; response: Response } =
-            await requestJson<unknown>({
-              url: `${API_BASE}/repos/${repository}/issues?state=open&sort=created&direction=desc&per_page=${pageSize}`,
-              headers,
-              fetchImpl,
-              signal: request.signal,
-              classifyError: classifyGitHubError,
-            });
+          const url = `${API_BASE}/repos/${repository}/issues?state=open&sort=created&direction=desc&per_page=${pageSize}`;
+          const resource = cacheResourceKey(url);
+          const answer = await requestJsonConditional<unknown>({
+            url,
+            headers,
+            fetchImpl,
+            signal: request.signal,
+            classifyError: classifyGitHubError,
+            validator: request.cache?.get(resource),
+          });
 
-          if (!Array.isArray(data)) {
+          if (answer.notModified) {
+            checks.push({ resource, repository, notModified: true, validator: null });
+            scanned += 1;
+            continue;
+          }
+
+          if (!Array.isArray(answer.data)) {
             throw new ProviderError(
               "INVALID_RESPONSE",
               "GitHub n'a pas renvoyé une liste d'issues.",
-              { status: response.status },
+              { status: answer.response.status },
             );
           }
 
-          for (const raw of data as GitHubIssue[]) {
-            issues.push(normaliseGitHubIssue(raw, repository));
-          }
+          // Normalised in full before anything is recorded: one malformed issue
+          // fails the repository, and no validator is kept for a half-read list.
+          const repositoryIssues = (answer.data as GitHubIssue[]).map((raw) =>
+            normaliseGitHubIssue(raw, repository),
+          );
+          issues.push(...repositoryIssues);
+          checks.push({ resource, repository, notModified: false, validator: answer.validator });
 
           scanned += 1;
         } catch (error) {
@@ -299,6 +315,7 @@ export function createGitHubAdapter(): IntegrationAdapter {
       return {
         supported: true,
         issues,
+        checks,
         fetchedAt: new Date(),
         repositoriesScanned: scanned,
         repositoriesSkipped: skipped,
@@ -329,32 +346,43 @@ export function createGitHubAdapter(): IntegrationAdapter {
       );
 
       const milestones: ProviderMilestone[] = [];
+      const checks: ResourceCheck[] = [];
       let scanned = 0;
       let failed = 0;
       let lastError: ProviderError | null = null;
 
       for (const repository of repositories) {
         try {
-          const { data, response }: { data: unknown; response: Response } =
-            await requestJson<unknown>({
-              url: `${API_BASE}/repos/${repository}/milestones?state=all&sort=due_on&direction=asc&per_page=${pageSize}`,
-              headers,
-              fetchImpl,
-              signal: request.signal,
-              classifyError: classifyGitHubError,
-            });
+          const url = `${API_BASE}/repos/${repository}/milestones?state=all&sort=due_on&direction=asc&per_page=${pageSize}`;
+          const resource = cacheResourceKey(url);
+          const answer = await requestJsonConditional<unknown>({
+            url,
+            headers,
+            fetchImpl,
+            signal: request.signal,
+            classifyError: classifyGitHubError,
+            validator: request.cache?.get(resource),
+          });
 
-          if (!Array.isArray(data)) {
+          if (answer.notModified) {
+            checks.push({ resource, repository, notModified: true, validator: null });
+            scanned += 1;
+            continue;
+          }
+
+          if (!Array.isArray(answer.data)) {
             throw new ProviderError(
               "INVALID_RESPONSE",
               "GitHub n'a pas renvoyé une liste de jalons.",
-              { status: response.status },
+              { status: answer.response.status },
             );
           }
 
-          for (const raw of data as GitHubMilestone[]) {
-            milestones.push(normaliseGitHubMilestone(raw, repository));
-          }
+          const repositoryMilestones = (answer.data as GitHubMilestone[]).map((raw) =>
+            normaliseGitHubMilestone(raw, repository),
+          );
+          milestones.push(...repositoryMilestones);
+          checks.push({ resource, repository, notModified: false, validator: answer.validator });
 
           scanned += 1;
         } catch (error) {
@@ -381,6 +409,7 @@ export function createGitHubAdapter(): IntegrationAdapter {
       return {
         supported: true,
         milestones,
+        checks,
         fetchedAt: new Date(),
         repositoriesScanned: scanned,
         repositoriesSkipped: skipped,

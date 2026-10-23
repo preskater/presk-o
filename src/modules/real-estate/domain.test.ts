@@ -5,6 +5,8 @@ import {
   computePropertyTotals,
   isCashflowOverdue,
   propertyInputSchema,
+  propertySaleInputSchema,
+  propertyUpdateSchema,
   resolveCashflowAmount,
   UnresolvedCashflowError,
   type CashflowEntry,
@@ -202,21 +204,28 @@ describe("propertyInputSchema", () => {
     name: "Appartement de test",
     address: "",
     occupancy: "VACANT",
+    currency: "EUR",
     purchaseDate: "",
-    saleDate: "",
+    purchasePrice: "",
+    estimatedValue: "",
+    estimatedValueAsOf: "",
+    targetGainRate: "10",
     notes: "",
   };
 
-  it("accepts a property with no address, no dates and no notes", () => {
+  it("accepts a property with no address, no dates, no prices and no notes", () => {
     const result = propertyInputSchema.safeParse(formValues);
 
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       address: null,
       purchaseDate: null,
-      saleDate: null,
+      purchasePrice: null,
+      estimatedValue: null,
+      estimatedValueAsOf: null,
       notes: null,
       occupancy: "VACANT",
+      currency: "EUR",
     });
   });
 
@@ -227,13 +236,116 @@ describe("propertyInputSchema", () => {
   });
 
   it("rejects an impossible date rather than shifting it", () => {
-    expect(propertyInputSchema.safeParse({ ...formValues, saleDate: "2026-13-01" }).success).toBe(
-      false,
-    );
+    expect(
+      propertyInputSchema.safeParse({ ...formValues, estimatedValueAsOf: "2026-13-01" }).success,
+    ).toBe(false);
   });
 
   it("requires a name", () => {
     expect(propertyInputSchema.safeParse({ ...formValues, name: "   " }).success).toBe(false);
+  });
+
+  it("keeps a missing price unknown instead of turning it into zero", () => {
+    const result = propertyInputSchema.safeParse(formValues);
+
+    expect(result.data?.purchasePrice).toBeNull();
+  });
+
+  it("refuses an estimated value that is not dated", () => {
+    const result = propertyInputSchema.safeParse({ ...formValues, estimatedValue: "250000,00" });
+
+    expect(result.success).toBe(false);
+    expect(
+      result.error?.issues.some((issue) => /doit être datée/.test(issue.message)),
+    ).toBe(true);
+  });
+
+  it("refuses an estimation date without its amount", () => {
+    expect(
+      propertyInputSchema.safeParse({ ...formValues, estimatedValueAsOf: "2026-10-01" }).success,
+    ).toBe(false);
+  });
+
+  it("refuses a non-positive acquisition price", () => {
+    expect(
+      propertyInputSchema.safeParse({ ...formValues, purchasePrice: "0" }).success,
+    ).toBe(false);
+  });
+
+  it("falls back to a 10 % target when the field is left empty", () => {
+    const result = propertyInputSchema.safeParse({ ...formValues, targetGainRate: "" });
+
+    expect(result.data?.targetGainRate.toFixed(2)).toBe("10.00");
+  });
+
+  it("refuses a target margin above 100 %", () => {
+    expect(
+      propertyInputSchema.safeParse({ ...formValues, targetGainRate: "150" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a dated valuation and normalises its amount", () => {
+    const result = propertyInputSchema.safeParse({
+      ...formValues,
+      estimatedValue: "250 000,00",
+      estimatedValueAsOf: "2026-10-01",
+    });
+
+    expect(result.data?.estimatedValue?.toFixed(2)).toBe("250000.00");
+    expect(result.data?.estimatedValueAsOf?.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+  });
+});
+
+describe("propertyUpdateSchema", () => {
+  const formValues = {
+    id: "property-1",
+    name: "Appartement de test",
+    address: "",
+    occupancy: "VACANT",
+    currency: "EUR",
+    purchaseDate: "",
+    purchasePrice: "",
+    estimatedValue: "",
+    estimatedValueAsOf: "",
+    targetGainRate: "10",
+    notes: "",
+  };
+
+  it("accepts an edit carrying its identifier", () => {
+    expect(propertyUpdateSchema.safeParse(formValues).success).toBe(true);
+  });
+
+  it("refuses an edit without an identifier", () => {
+    expect(propertyUpdateSchema.safeParse({ ...formValues, id: " " }).success).toBe(false);
+  });
+});
+
+describe("propertySaleInputSchema", () => {
+  const sale = {
+    id: "property-1",
+    saleDate: "2026-10-21",
+    salePrice: "320000,00",
+    saleCosts: "0",
+  };
+
+  it("accepts a sale with its date, price and costs", () => {
+    const result = propertySaleInputSchema.safeParse(sale);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.salePrice.toFixed(2)).toBe("320000.00");
+    expect(result.data?.saleCosts.toFixed(2)).toBe("0.00");
+  });
+
+  it("refuses a sale without a price", () => {
+    expect(propertySaleInputSchema.safeParse({ ...sale, salePrice: "" }).success).toBe(false);
+  });
+
+  it("refuses a sale without a date", () => {
+    expect(propertySaleInputSchema.safeParse({ ...sale, saleDate: "" }).success).toBe(false);
+  });
+
+  it("refuses negative selling costs", () => {
+    expect(propertySaleInputSchema.safeParse({ ...sale, saleCosts: "-1" }).success).toBe(false);
   });
 });
 

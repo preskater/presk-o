@@ -3,79 +3,207 @@ import { getPrisma } from "@/lib/db";
 import { assertCurrency, type Currency } from "@/lib/money";
 import {
   computePropertyTotals,
-  type CashflowEntry,
   type CashflowKind,
+  type PropertyCashflowDetail,
   type PropertyOccupancy,
   type PropertySummary,
 } from "./domain";
+import type { LoanSummary } from "./loans";
 import type { DueCashflow } from "./alerts";
+import { computeSaleAnalysis, type PropertySaleAnalysis } from "./valuation";
 
 /** Real-estate persistence. Every query is scoped to the owner. */
+
+const PROPERTY_SELECT = {
+  id: true,
+  name: true,
+  address: true,
+  occupancy: true,
+  currency: true,
+  purchaseDate: true,
+  purchasePrice: true,
+  estimatedValue: true,
+  estimatedValueAsOf: true,
+  targetGainRate: true,
+  saleDate: true,
+  salePrice: true,
+  saleCosts: true,
+  notes: true,
+} as const;
+
+const CASHFLOW_SELECT = {
+  id: true,
+  kind: true,
+  label: true,
+  currency: true,
+  amount: true,
+  dueDate: true,
+  settledAt: true,
+  notes: true,
+  createdAt: true,
+  transaction: { select: { id: true, label: true, amount: true } },
+} as const;
+
+type DecimalLike = { toString(): string };
+
+type CashflowRow = {
+  id: string;
+  kind: string;
+  label: string;
+  currency: string;
+  amount: DecimalLike | null;
+  dueDate: Date | null;
+  settledAt: Date | null;
+  notes: string | null;
+  createdAt: Date;
+  transaction: { id: string; label: string; amount: DecimalLike } | null;
+};
+
+type PropertyRow = {
+  id: string;
+  name: string;
+  address: string | null;
+  occupancy: string;
+  currency: string;
+  purchaseDate: Date | null;
+  purchasePrice: DecimalLike | null;
+  estimatedValue: DecimalLike | null;
+  estimatedValueAsOf: Date | null;
+  targetGainRate: DecimalLike;
+  saleDate: Date | null;
+  salePrice: DecimalLike | null;
+  saleCosts: DecimalLike | null;
+  notes: string | null;
+  cashflows: CashflowRow[];
+};
+
+function toOptionalDecimal(value: DecimalLike | null): Decimal | null {
+  return value === null ? null : new Decimal(value.toString());
+}
+
+function toCashflowDetail(row: CashflowRow): PropertyCashflowDetail {
+  return {
+    id: row.id,
+    kind: row.kind as CashflowKind,
+    label: row.label,
+    currency: assertCurrency(row.currency),
+    // `null` means "linked to a transaction": see the double-counting rule.
+    amount: toOptionalDecimal(row.amount),
+    dueDate: row.dueDate,
+    settledAt: row.settledAt,
+    transaction: row.transaction
+      ? {
+          id: row.transaction.id,
+          label: row.transaction.label,
+          amount: new Decimal(row.transaction.amount.toString()),
+        }
+      : null,
+    notes: row.notes,
+    createdAt: row.createdAt,
+  };
+}
+
+/**
+ * Summary of one property, with its operating totals.
+ *
+ * `currency` is the cashflow totals currency (entries carry their own) while
+ * `priceCurrency` is the reference currency of the acquisition, valuation and sale
+ * prices. They are kept distinct so a caller can never silently mix both ledgers.
+ */
+function toPropertySummary(
+  row: Omit<PropertyRow, "cashflows">,
+  entries: PropertyCashflowDetail[],
+): PropertySummary {
+  const currency: Currency = entries[0]?.currency ?? "EUR";
+  const totals = computePropertyTotals(entries, { currency });
+
+  return {
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    occupancy: row.occupancy as PropertyOccupancy,
+    purchaseDate: row.purchaseDate,
+    saleDate: row.saleDate,
+    notes: row.notes,
+    cashflowCount: entries.length,
+    income: totals.income,
+    expenses: totals.expenses,
+    net: totals.net,
+    currency,
+    priceCurrency: assertCurrency(row.currency),
+    purchasePrice: toOptionalDecimal(row.purchasePrice),
+    estimatedValue: toOptionalDecimal(row.estimatedValue),
+    estimatedValueAsOf: row.estimatedValueAsOf,
+    targetGainRate: new Decimal(row.targetGainRate.toString()),
+    salePrice: toOptionalDecimal(row.salePrice),
+    saleCosts: toOptionalDecimal(row.saleCosts),
+  };
+}
 
 export async function listProperties(userId: string): Promise<PropertySummary[]> {
   const rows = await getPrisma().property.findMany({
     where: { userId },
     orderBy: { name: "asc" },
+    select: { ...PROPERTY_SELECT, cashflows: { select: CASHFLOW_SELECT } },
+  });
+
+  return rows.map((row) =>
+    toPropertySummary(row, row.cashflows.map(toCashflowDetail)),
+  );
+}
+
+/** One property with its full history and its sale analysis. */
+export type PropertyDetail = PropertySummary & {
+  cashflows: PropertyCashflowDetail[];
+  loans: LoanSummary[];
+  analysis: PropertySaleAnalysis;
+};
+
+/** Owner-scoped detail lookup: an identifier from a URL is never trusted. */
+export async function getPropertyDetail(
+  userId: string,
+  propertyId: string,
+): Promise<PropertyDetail | null> {
+  const row = await getPrisma().property.findFirst({
+    where: { id: propertyId, userId },
     select: {
-      id: true,
-      name: true,
-      address: true,
-      occupancy: true,
-      purchaseDate: true,
-      saleDate: true,
-      notes: true,
+      ...PROPERTY_SELECT,
       cashflows: {
-        select: {
-          id: true,
-          kind: true,
-          label: true,
-          currency: true,
-          amount: true,
-          dueDate: true,
-          settledAt: true,
-          transaction: { select: { id: true, label: true, amount: true } },
-        },
+        select: CASHFLOW_SELECT,
+        orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
+      },
+      loans: {
+        select: LOAN_SELECT,
+        orderBy: [{ startDate: "asc" }, { label: "asc" }],
       },
     },
   });
 
-  return rows.map((row) => {
-    const entries: CashflowEntry[] = row.cashflows.map((cashflow) => ({
-      id: cashflow.id,
-      kind: cashflow.kind as CashflowKind,
-      label: cashflow.label,
-      currency: assertCurrency(cashflow.currency),
-      // `null` means "linked to a transaction": see the double-counting rule.
-      amount: cashflow.amount ? new Decimal(cashflow.amount.toString()) : null,
-      dueDate: cashflow.dueDate,
-      settledAt: cashflow.settledAt,
-      transaction: cashflow.transaction
-        ? {
-            id: cashflow.transaction.id,
-            label: cashflow.transaction.label,
-            amount: new Decimal(cashflow.transaction.amount.toString()),
-          }
-        : null,
-    }));
+  if (!row) {
+    return null;
+  }
 
-    const currency: Currency = entries[0]?.currency ?? "EUR";
-    const totals = computePropertyTotals(entries, { currency });
-
-    return {
-      id: row.id,
-      name: row.name,
-      address: row.address,
-      occupancy: row.occupancy as PropertyOccupancy,
-      purchaseDate: row.purchaseDate,
-      saleDate: row.saleDate,
-      notes: row.notes,
-      cashflowCount: entries.length,
-      income: totals.income,
-      expenses: totals.expenses,
-      net: totals.net,
-      currency,
-    } satisfies PropertySummary;
+  const cashflows = row.cashflows.map(toCashflowDetail);
+  const summary = toPropertySummary(row, cashflows);
+  const loans = row.loans.map(toLoanSummary);
+  const analysis = computeSaleAnalysis({
+    currency: summary.priceCurrency,
+    purchasePrice: summary.purchasePrice,
+    estimatedValue: summary.estimatedValue,
+    estimatedValueAsOf: summary.estimatedValueAsOf,
+    targetGainRate: summary.targetGainRate,
+    saleDate: summary.saleDate,
+    salePrice: summary.salePrice,
+    saleCosts: summary.saleCosts,
+    totals: {
+      income: summary.income,
+      expenses: summary.expenses,
+      currency: summary.currency,
+    },
+    loans,
   });
+
+  return { ...summary, cashflows, loans, analysis };
 }
 
 export async function countProperties(userId: string): Promise<number> {
@@ -116,27 +244,99 @@ export async function findProperty(
   return row;
 }
 
-export async function createProperty(input: {
-  userId: string;
+export type PropertyWriteInput = {
   name: string;
   address: string | null;
   occupancy: PropertyOccupancy;
+  currency: Currency;
   purchaseDate: Date | null;
-  saleDate: Date | null;
+  purchasePrice: Decimal | null;
+  estimatedValue: Decimal | null;
+  estimatedValueAsOf: Date | null;
+  targetGainRate: Decimal;
   notes: string | null;
-}): Promise<{ id: string }> {
+};
+
+/** Amounts are stored as exact two-decimal strings, never as floats. */
+function toPropertyData(input: PropertyWriteInput) {
+  const price = (value: Decimal | null): string | null =>
+    value === null ? null : value.toFixed(2);
+
+  return {
+    name: input.name.trim(),
+    address: input.address,
+    occupancy: input.occupancy,
+    currency: input.currency,
+    purchaseDate: input.purchaseDate,
+    purchasePrice: price(input.purchasePrice),
+    estimatedValue: price(input.estimatedValue),
+    estimatedValueAsOf: input.estimatedValueAsOf,
+    targetGainRate: input.targetGainRate.toFixed(2),
+    notes: input.notes,
+  };
+}
+
+export async function createProperty(
+  input: PropertyWriteInput & { userId: string },
+): Promise<{ id: string }> {
   return getPrisma().property.create({
-    data: {
-      userId: input.userId,
-      name: input.name.trim(),
-      address: input.address,
-      occupancy: input.occupancy,
-      purchaseDate: input.purchaseDate,
-      saleDate: input.saleDate,
-      notes: input.notes,
-    },
+    data: { userId: input.userId, ...toPropertyData(input) },
     select: { id: true },
   });
+}
+
+/** Updates owner-scoped only: a property from another owner matches nothing. */
+export async function updateProperty(
+  userId: string,
+  propertyId: string,
+  input: PropertyWriteInput,
+): Promise<boolean> {
+  const { count } = await getPrisma().property.updateMany({
+    where: { id: propertyId, userId },
+    data: toPropertyData(input),
+  });
+
+  return count === 1;
+}
+
+/**
+ * Deletes a property and, by the schema's cascades, its cashflows and loans.
+ *
+ * A sale is **not** a deletion: the property keeps its history and its sale figures.
+ * This function is only called when the owner explicitly chooses to erase the record.
+ */
+export async function deleteProperty(
+  userId: string,
+  propertyId: string,
+): Promise<boolean> {
+  const { count } = await getPrisma().property.deleteMany({
+    where: { id: propertyId, userId },
+  });
+
+  return count === 1;
+}
+
+/**
+ * Records (or corrects) the sale of a property.
+ *
+ * Only the sale columns change: the operating history and the loans stay, which is
+ * what lets the detail page show what the sale actually yielded.
+ */
+export async function savePropertySale(
+  userId: string,
+  propertyId: string,
+  input: { saleDate: Date; salePrice: Decimal; saleCosts: Decimal },
+): Promise<boolean> {
+  const { count } = await getPrisma().property.updateMany({
+    where: { id: propertyId, userId },
+    data: {
+      saleDate: input.saleDate,
+      salePrice: input.salePrice.toFixed(2),
+      saleCosts: input.saleCosts.toFixed(2),
+    },
+  });
+
+  return count === 1;
 }
 
 /**
@@ -223,4 +423,153 @@ export async function listDueCashflows(
     dueDate: row.dueDate,
     settledAt: row.settledAt,
   }));
+}
+
+/** Real-estate financing. Every query is scoped to the owner through the property. */
+
+const LOAN_SELECT = {
+  id: true,
+  propertyId: true,
+  label: true,
+  currency: true,
+  initialPrincipal: true,
+  outstandingBalance: true,
+  balanceAsOf: true,
+  interestRate: true,
+  termMonths: true,
+  paymentAmount: true,
+  insuranceAmount: true,
+  startDate: true,
+  endDate: true,
+  notes: true,
+} as const;
+
+type LoanRow = {
+  id: string;
+  propertyId: string;
+  label: string;
+  currency: string;
+  initialPrincipal: DecimalLike;
+  outstandingBalance: DecimalLike | null;
+  balanceAsOf: Date | null;
+  interestRate: DecimalLike | null;
+  termMonths: number | null;
+  paymentAmount: DecimalLike | null;
+  insuranceAmount: DecimalLike | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  notes: string | null;
+};
+
+function toLoanSummary(row: LoanRow): LoanSummary {
+  const decimal = (value: DecimalLike | null): Decimal | null =>
+    value === null ? null : new Decimal(value.toString());
+
+  return {
+    id: row.id,
+    propertyId: row.propertyId,
+    label: row.label,
+    currency: assertCurrency(row.currency),
+    initialPrincipal: new Decimal(row.initialPrincipal.toString()),
+    outstandingBalance: decimal(row.outstandingBalance),
+    balanceAsOf: row.balanceAsOf,
+    interestRate: decimal(row.interestRate),
+    termMonths: row.termMonths,
+    paymentAmount: decimal(row.paymentAmount),
+    insuranceAmount: decimal(row.insuranceAmount),
+    startDate: row.startDate,
+    endDate: row.endDate,
+    notes: row.notes,
+  };
+}
+
+export async function listLoans(userId: string): Promise<LoanSummary[]> {
+  const rows = await getPrisma().propertyLoan.findMany({
+    where: { property: { userId } },
+    orderBy: [{ propertyId: "asc" }, { label: "asc" }],
+    select: LOAN_SELECT,
+  });
+
+  return rows.map(toLoanSummary);
+}
+
+/** Owner-scoped loan lookup: a form identifier is never trusted. */
+export async function findLoan(
+  userId: string,
+  loanId: string,
+): Promise<LoanSummary | null> {
+  const row = await getPrisma().propertyLoan.findFirst({
+    where: { id: loanId, property: { userId } },
+    select: LOAN_SELECT,
+  });
+
+  return row ? toLoanSummary(row) : null;
+}
+
+export type LoanWriteInput = {
+  propertyId: string;
+  label: string;
+  currency: Currency;
+  initialPrincipal: Decimal;
+  outstandingBalance: Decimal | null;
+  balanceAsOf: Date | null;
+  interestRate: Decimal | null;
+  termMonths: number | null;
+  paymentAmount: Decimal | null;
+  insuranceAmount: Decimal | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  notes: string | null;
+};
+
+/** Persists a loan's fields. Amounts are stored as exact two-decimal strings. */
+function toLoanData(input: LoanWriteInput) {
+  const amount = (value: Decimal | null): string | null =>
+    value === null ? null : value.toFixed(2);
+
+  return {
+    label: input.label.trim(),
+    currency: input.currency,
+    initialPrincipal: input.initialPrincipal.toFixed(2),
+    outstandingBalance: amount(input.outstandingBalance),
+    balanceAsOf: input.balanceAsOf,
+    interestRate: amount(input.interestRate),
+    termMonths: input.termMonths,
+    paymentAmount: amount(input.paymentAmount),
+    insuranceAmount: amount(input.insuranceAmount),
+    startDate: input.startDate,
+    endDate: input.endDate,
+    notes: input.notes,
+  };
+}
+
+export async function createLoan(
+  input: LoanWriteInput,
+): Promise<{ id: string }> {
+  return getPrisma().propertyLoan.create({
+    data: { propertyId: input.propertyId, ...toLoanData(input) },
+    select: { id: true },
+  });
+}
+
+/** Updates owner-scoped only: a loan from another owner matches nothing. */
+export async function updateLoan(
+  userId: string,
+  loanId: string,
+  input: LoanWriteInput,
+): Promise<boolean> {
+  const { count } = await getPrisma().propertyLoan.updateMany({
+    where: { id: loanId, property: { userId } },
+    data: { propertyId: input.propertyId, ...toLoanData(input) },
+  });
+
+  return count === 1;
+}
+
+export async function deleteLoan(userId: string, loanId: string): Promise<boolean> {
+  const { count } = await getPrisma().propertyLoan.deleteMany({
+    where: { id: loanId, property: { userId } },
+  });
+
+  return count === 1;
 }

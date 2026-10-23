@@ -1,6 +1,8 @@
 import { getPrisma } from "@/lib/db";
 import { decodeEncryptionKey, decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getServerEnv } from "@/lib/env";
+import type { ResourceCheck } from "./adapter";
+import { CACHE_MAX_AGE_DAYS, type CacheEntryLike } from "./cache";
 import {
   describeInstance,
   type ConnectionSummary,
@@ -127,7 +129,7 @@ export async function upsertConnection(input: {
 }): Promise<{ id: string }> {
   const credentialsCiphertext = encryptSecret(input.token, encryptionKey());
 
-  return getPrisma().integrationConnection.upsert({
+  const connection = await getPrisma().integrationConnection.upsert({
     where: {
       userId_provider_instanceUrl: {
         userId: input.userId,
@@ -154,6 +156,14 @@ export async function upsertConnection(input: {
     },
     select: { id: true },
   });
+
+  // A new token may see other repositories, and GitHub validators depend on the
+  // credentials: none of the previous ones may be sent with it (DA-04).
+  await getPrisma().providerCacheEntry.deleteMany({
+    where: { connectionId: connection.id },
+  });
+
+  return connection;
 }
 
 /**
@@ -281,18 +291,25 @@ export type IssueSummary = {
  *
  * Same idempotency rule as the project snapshots: upserting on
  * (connectionId, externalId) makes a re-run update rows instead of duplicating
- * them. `pruneMissing` deletes what the provider no longer reports as open —
- * a closed issue must leave this list, which is what keeps it a to-do list and not
- * an archive. It is only safe once every targeted repository was read: a repository
- * skipped by the bound, or refused by the provider, would have its issues erased
- * while they are still open.
+ * them.
+ *
+ * Pruning is per repository (DA-04): an issue the provider no longer reports as open
+ * is deleted from each repository **read in full this run** — a closed issue must
+ * leave this list, which is what keeps it a to-do list and not an archive — and every
+ * issue of a repository no longer tracked goes too. A repository answered 304, left
+ * out by the bound or refused by the provider is not touched: its rows are either
+ * current (304) or unknown, never "closed".
  */
 export async function saveIssues(input: {
   connectionId: string;
   provider: IntegrationProvider;
+  /** Issues of the repositories read in full. */
   issues: readonly ProviderIssue[];
   fetchedAt: Date;
-  pruneMissing?: boolean;
+  /** Repositories read in full this run (200): their missing issues are closed. */
+  readRepositories: readonly string[];
+  /** Every repository still tracked: issues of any other one are dropped. */
+  trackedRepositories: readonly string[];
 }): Promise<{ created: number; updated: number }> {
   const prisma = getPrisma();
 
@@ -341,14 +358,18 @@ export async function saveIssues(input: {
     });
   }
 
-  if (input.pruneMissing) {
-    await prisma.issueSnapshot.deleteMany({
-      where: {
-        connectionId: input.connectionId,
-        externalId: { notIn: input.issues.map((issue) => issue.externalId) },
-      },
-    });
-  }
+  await prisma.issueSnapshot.deleteMany({
+    where: {
+      connectionId: input.connectionId,
+      OR: [
+        {
+          repository: { in: [...input.readRepositories] },
+          externalId: { notIn: input.issues.map((issue) => issue.externalId) },
+        },
+        { repository: { notIn: [...input.trackedRepositories] } },
+      ],
+    },
+  });
 
   return { created, updated: input.issues.length - created };
 }
@@ -450,16 +471,17 @@ export type MilestoneSummary = {
  * Stores the milestones of one synchronisation.
  *
  * Same idempotency rule as everywhere else: upserting on (connectionId, externalId).
- * `pruneMissing` matters more here than for the issues: a milestone deleted at the
- * provider would otherwise linger forever with a due date that no longer means
- * anything.
+ * Pruning follows the issue rule, per repository read in full: it matters more here,
+ * since a milestone deleted at the provider would otherwise linger forever with a due
+ * date that no longer means anything.
  */
 export async function saveMilestones(input: {
   connectionId: string;
   provider: IntegrationProvider;
   milestones: readonly ProviderMilestone[];
   fetchedAt: Date;
-  pruneMissing?: boolean;
+  readRepositories: readonly string[];
+  trackedRepositories: readonly string[];
 }): Promise<{ created: number; updated: number }> {
   const prisma = getPrisma();
 
@@ -502,14 +524,18 @@ export async function saveMilestones(input: {
     });
   }
 
-  if (input.pruneMissing) {
-    await prisma.milestoneSnapshot.deleteMany({
-      where: {
-        connectionId: input.connectionId,
-        externalId: { notIn: input.milestones.map((milestone) => milestone.externalId) },
-      },
-    });
-  }
+  await prisma.milestoneSnapshot.deleteMany({
+    where: {
+      connectionId: input.connectionId,
+      OR: [
+        {
+          repository: { in: [...input.readRepositories] },
+          externalId: { notIn: input.milestones.map((milestone) => milestone.externalId) },
+        },
+        { repository: { notIn: [...input.trackedRepositories] } },
+      ],
+    },
+  });
 
   return { created, updated: input.milestones.length - created };
 }
@@ -575,6 +601,121 @@ export async function listMilestones(userId: string): Promise<MilestoneSummary[]
 
       return left.title.localeCompare(right.title);
     });
+}
+
+/** Stored validators of one connection, as the synchronisation reads them (DA-04). */
+export async function listCacheEntries(connectionId: string): Promise<CacheEntryLike[]> {
+  return getPrisma().providerCacheEntry.findMany({
+    where: { connectionId },
+    select: {
+      resource: true,
+      etag: true,
+      lastModified: true,
+      checkedAt: true,
+      changedAt: true,
+    },
+  });
+}
+
+/**
+ * Records the resources checked by one run (DA-04), **after** their rows were saved:
+ * a validator must never be stored ahead of the data it vouches for, so a run that
+ * stops halfway leaves at worst an old validator for old rows, never a new one for
+ * rows that were not written.
+ *
+ * A 304 only moves `checkedAt`. A full answer moves both instants and replaces the
+ * validators — with `null` when it carried none, so a stale one is never kept. Entries
+ * of repositories no longer tracked, and entries nobody checked within the maximum
+ * age (a changed bound leaves its old keys behind), are dropped.
+ */
+export async function saveCacheChecks(input: {
+  connectionId: string;
+  kind: "issues" | "milestones";
+  checks: readonly ResourceCheck[];
+  trackedRepositories: readonly string[];
+  checkedAt: Date;
+}): Promise<void> {
+  const prisma = getPrisma();
+
+  for (const check of input.checks) {
+    if (check.notModified) {
+      await prisma.providerCacheEntry.updateMany({
+        where: { connectionId: input.connectionId, resource: check.resource },
+        data: { checkedAt: input.checkedAt },
+      });
+      continue;
+    }
+
+    const data = {
+      kind: input.kind,
+      repository: check.repository,
+      etag: check.validator?.etag ?? null,
+      lastModified: check.validator?.lastModified ?? null,
+      checkedAt: input.checkedAt,
+      changedAt: input.checkedAt,
+    };
+
+    await prisma.providerCacheEntry.upsert({
+      where: {
+        connectionId_resource: { connectionId: input.connectionId, resource: check.resource },
+      },
+      create: { connectionId: input.connectionId, resource: check.resource, ...data },
+      update: data,
+    });
+  }
+
+  await prisma.providerCacheEntry.deleteMany({
+    where: {
+      connectionId: input.connectionId,
+      kind: input.kind,
+      OR: [
+        { repository: { notIn: [...input.trackedRepositories] } },
+        {
+          checkedAt: {
+            lt: new Date(input.checkedAt.getTime() - CACHE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000),
+          },
+        },
+      ],
+    },
+  });
+}
+
+/** One cache entry as the integrations page displays it. */
+export type ProviderCacheSummary = {
+  id: string;
+  provider: IntegrationProvider;
+  kind: string;
+  repository: string;
+  hasValidator: boolean;
+  checkedAt: Date;
+  changedAt: Date;
+};
+
+export async function listProviderCache(userId: string): Promise<ProviderCacheSummary[]> {
+  const rows = await getPrisma().providerCacheEntry.findMany({
+    where: { connection: { userId } },
+    orderBy: [{ repository: "asc" }, { kind: "asc" }],
+    select: {
+      id: true,
+      kind: true,
+      repository: true,
+      etag: true,
+      lastModified: true,
+      checkedAt: true,
+      changedAt: true,
+      connection: { select: { provider: true } },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    provider: row.connection.provider as IntegrationProvider,
+    kind: row.kind,
+    repository: row.repository,
+    hasValidator: Boolean(row.etag || row.lastModified),
+    checkedAt: row.checkedAt,
+    changedAt: row.changedAt,
+  }));
 }
 
 /** Opens a run before the first provider request. */

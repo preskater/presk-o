@@ -1,7 +1,15 @@
 import Decimal from "decimal.js";
 import { z } from "zod";
 import type { Currency } from "@/lib/money";
-import { currencyCode, optionalAmount, optionalDate, optionalId, optionalText } from "@/lib/validation";
+import {
+  amount,
+  currencyCode,
+  optionalAmount,
+  optionalDate,
+  optionalId,
+  optionalText,
+  requiredDate,
+} from "@/lib/validation";
 
 /**
  * Real-estate module.
@@ -46,6 +54,19 @@ export type CashflowEntry = {
   } | null;
 };
 
+/** A cashflow entry with the fields the property history displays. */
+export type PropertyCashflowDetail = CashflowEntry & {
+  notes: string | null;
+  createdAt: Date;
+};
+
+/**
+ * Margin applied above the break-even sale price when a property records none.
+ * Documented in `docs/architecture/overview.md`; stored per property so the owner
+ * can change it without touching the code.
+ */
+export const DEFAULT_TARGET_GAIN_RATE = new Decimal(10);
+
 export type PropertySummary = {
   id: string;
   name: string;
@@ -58,7 +79,16 @@ export type PropertySummary = {
   income: Decimal;
   expenses: Decimal;
   net: Decimal;
+  /** Currency of the cashflow totals above (entries carry their own). */
   currency: Currency;
+  /** Reference currency of the prices below; never mixed with another one. */
+  priceCurrency: Currency;
+  purchasePrice: Decimal | null;
+  estimatedValue: Decimal | null;
+  estimatedValueAsOf: Date | null;
+  targetGainRate: Decimal;
+  salePrice: Decimal | null;
+  saleCosts: Decimal | null;
 };
 
 export class UnresolvedCashflowError extends Error {
@@ -140,17 +170,91 @@ export function isCashflowOverdue(
   return entry.dueDate.getTime() < today.getTime();
 }
 
-export const propertyInputSchema = z.object({
+const POSITIVE_MESSAGE = "La valeur doit être supérieure à zéro.";
+
+/** A required positive magnitude, using the shared two-decimal amount parser. */
+const positiveAmount = amount.refine(
+  (value) => value.greaterThan(0),
+  POSITIVE_MESSAGE,
+);
+
+/** An optional positive magnitude: empty means "not recorded", never zero. */
+const optionalPositiveAmount = optionalAmount.refine(
+  (value) => value === null || value.greaterThan(0),
+  POSITIVE_MESSAGE,
+);
+
+/**
+ * Property fields shared by the creation and the edition.
+ *
+ * Prices are optional on purpose: an amount that was never recorded reads
+ * "inconnu" everywhere, never zero. The sale itself is not part of this contract:
+ * it goes through the dedicated `propertySaleInputSchema`, so a sale always carries
+ * its date and its price together.
+ */
+const propertyFields = z.object({
   name: z.string().trim().min(1, "Le nom est requis.").max(120),
   address: optionalText(300, "L'adresse est limitée à 300 caractères."),
   occupancy: z.enum(PROPERTY_OCCUPANCIES).default("VACANT"),
+  currency: currencyCode.optional(),
   purchaseDate: optionalDate,
-  saleDate: optionalDate,
+  purchasePrice: optionalPositiveAmount,
+  estimatedValue: optionalPositiveAmount,
+  estimatedValueAsOf: optionalDate,
+  targetGainRate: optionalAmount
+    .refine(
+      (value) => value === null || (value.greaterThanOrEqualTo(0) && value.lessThanOrEqualTo(100)),
+      "L'objectif doit être compris entre 0 et 100 %.",
+    )
+    .transform((value) => value ?? DEFAULT_TARGET_GAIN_RATE),
   notes: optionalText(2000, "Les notes sont limitées à 2000 caractères."),
+});
+
+type PropertyFields = z.infer<typeof propertyFields>;
+
+/** A valuation is a snapshot: its amount and its observation date come together. */
+function valuationIsDated(value: PropertyFields): boolean {
+  return Boolean(value.estimatedValue) === Boolean(value.estimatedValueAsOf);
+}
+
+const VALUATION_MESSAGE =
+  "Une valeur estimée doit être datée : renseignez le montant et sa date ensemble.";
+
+export const propertyInputSchema = propertyFields.refine(valuationIsDated, {
+  message: VALUATION_MESSAGE,
+  path: ["estimatedValueAsOf"],
 });
 
 export type PropertyInput = z.input<typeof propertyInputSchema>;
 export type ValidatedPropertyInput = z.output<typeof propertyInputSchema>;
+
+/** Same rules plus the identifier, for an in-place edit. */
+export const propertyUpdateSchema = propertyFields
+  .extend({ id: z.string().trim().min(1, "Identifiant manquant.") })
+  .refine(valuationIsDated, { message: VALUATION_MESSAGE, path: ["estimatedValueAsOf"] });
+
+export type PropertyUpdateInput = z.input<typeof propertyUpdateSchema>;
+
+/**
+ * Input contract for a sale.
+ *
+ * The date and the price are required together: a sale without its price could not
+ * tell what the property yielded. Selling costs are required too, with `0` allowed —
+ * the form pre-fills `0`, so "no costs" is an explicit answer rather than a silent
+ * default that would later look unknown.
+ */
+export const propertySaleInputSchema = z.object({
+  id: z.string().trim().min(1, "Identifiant manquant."),
+  saleDate: requiredDate,
+  salePrice: positiveAmount,
+  saleCosts: amount.refine(
+    (value) => value.greaterThanOrEqualTo(0),
+    "Les frais de cession ne peuvent pas être négatifs.",
+  ),
+});
+
+export type PropertySaleInput = z.input<typeof propertySaleInputSchema>;
+export type ValidatedPropertySaleInput = z.output<typeof propertySaleInputSchema>;
 
 /**
  * Input contract for a cashflow entry.
