@@ -1,4 +1,5 @@
 import { getPrisma } from "@/lib/db";
+import { type ActiveWorkspace, defaultWorkspaceId } from "@/modules/identity/workspace";
 
 /**
  * Identity module.
@@ -40,7 +41,11 @@ export async function countOwners(): Promise<number> {
 }
 
 /**
- * Replaces the password hash of one owner.
+ * Replaces the password hash of one owner and revokes every active session.
+ *
+ * Both writes share one transaction: a change that committed the hash but not the
+ * revocations would still be safe (the token fingerprint no longer matches), but the
+ * account page would keep listing sessions that can never authenticate again.
  *
  * Scoped by identifier, and the number of written rows is returned: a session that
  * outlived its row (the database was recreated, or reset) would otherwise look
@@ -50,12 +55,21 @@ export async function updateOwnerPassword(
   userId: string,
   passwordHash: string,
 ): Promise<boolean> {
-  const { count } = await getPrisma().user.updateMany({
-    where: { id: userId },
-    data: { passwordHash },
-  });
+  const prisma = getPrisma();
+  const now = new Date();
 
-  return count === 1;
+  const [updated] = await prisma.$transaction([
+    prisma.user.updateMany({
+      where: { id: userId },
+      data: { passwordHash },
+    }),
+    prisma.session.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+
+  return updated.count === 1;
 }
 
 /**
@@ -75,4 +89,41 @@ export async function upsertOwner(input: {
     update: { name: input.name, passwordHash: input.passwordHash },
     select: { id: true, email: true },
   });
+}
+
+/**
+ * The user's memberships, oldest first: the order `resolveActiveWorkspace` relies on
+ * for a stable default. Filtered by user, so another user's workspace never appears.
+ */
+export async function listMemberships(userId: string): Promise<ActiveWorkspace[]> {
+  const rows = await getPrisma().workspaceMember.findMany({
+    where: { userId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { role: true, workspace: { select: { id: true, name: true, kind: true } } },
+  });
+
+  return rows.map(({ role, workspace }) => ({ ...workspace, role }));
+}
+
+/**
+ * Gives the owner their personal workspace. Used by the seed script; idempotent and
+ * writes the same identifiers as the migration backfill, so neither path duplicates
+ * the other.
+ */
+export async function ensureDefaultWorkspace(userId: string): Promise<void> {
+  const workspaceId = defaultWorkspaceId(userId);
+  const prisma = getPrisma();
+
+  await prisma.$transaction([
+    prisma.workspace.upsert({
+      where: { id: workspaceId },
+      create: { id: workspaceId, name: "Personnel", kind: "PERSONAL" },
+      update: {},
+    }),
+    prisma.workspaceMember.upsert({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      create: { id: `wm-${userId}`, workspaceId, userId, role: "OWNER" },
+      update: {},
+    }),
+  ]);
 }

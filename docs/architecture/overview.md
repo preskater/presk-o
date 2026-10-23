@@ -13,7 +13,7 @@ the pages that consume it.
 
 | Module | Responsibility | Key files |
 | --- | --- | --- |
-| `identity` | The single owner account. No public sign-up: the account is created by the seed script. | `repository.ts` |
+| `identity` | The owner account and workspace memberships (roles `OWNER`, `ADMIN`, `MEMBER`, `VIEWER`). No public sign-up: the account and its personal workspace are created by the seed script. | `repository.ts`, `workspace.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
@@ -178,6 +178,18 @@ asked for: a cascade here would silently change what a property is worth.
   its currency). They are **archived**, never deleted: an archived account leaves the
   entry forms and the alert engine and keeps its history readable; restoring clears the
   stamp. Accounts and categories are managed in the « Comptes » tab.
+- **Property financing** is kept apart from operating cashflow on purpose. A
+  `PropertyLoan` describes the money that funds a property: a positive
+  `initialPrincipal`, an optional stored `outstandingBalance` with its observation date
+  (`balanceAsOf`), an optional positive interest rate (a percentage), an optional term
+  in months, optional monthly `paymentAmount` and `insuranceAmount`, and optional start
+  and end dates. A loan carries its own explicit currency and is owner-scoped through
+  its property. **None of these amounts feeds `computePropertyTotals`**: interest,
+  principal and insurance are the cost of owning the asset, not its operating result,
+  and the same money already appears in the budget, so adding them to the cashflow
+  totals would double-count it. A missing figure — a balance, a rate, a term — reads
+  « inconnu », never zero. Currencies are never converted: financing is totalled per
+  currency.
 
 ## Documented indicator definitions
 
@@ -343,6 +355,54 @@ asked for: a cascade here would silently change what a property is worth.
   projection stays "—" while the pending net is still told — nothing is made up from it.
 - Property totals — each cashflow entry counts once. When an entry is linked to
   a transaction, the transaction is the only source of the amount.
+- Property financing (real-estate page, « Financement » card) — the loans of a property,
+  shown beside the operating figures and **never added to them**:
+  - *monthly cost* — the sum of each loan's monthly payment + insurance, per currency;
+    « inconnu » when no loan of that currency records either, never a zero;
+  - *outstanding debt* — the sum of the recorded `outstandingBalance` snapshots, per
+    currency; a loan whose balance was never recorded is excluded from the total and
+    counted apart (its debt is unknown, not zero);
+  - *rate* — an annual percentage, positive; the two-decimal amount parser is reused, so
+    a missing rate reads « inconnu »;
+  - the operating totals of the property (`income`, `expenses`, `net`) are untouched by
+    any loan: financing is a separate ledger of cost, not a movement of the property's
+    cashflow.
+- Property valuation and sale indicator (property detail, `/real-estate/{id}`) — a
+  projection built only from the owner's recorded amounts. It forecasts no market
+  price and is not investment advice. Prices use the property's own reference
+  currency; cashflow entries keep theirs, and no figure is ever converted.
+  - *net invested capital* — acquisition price + cumulative operating expenses −
+    cumulative operating income (rents already deducted, financing excluded). It reads
+    **unknown** when the acquisition price is missing or when the cashflow totals are
+    in another currency than the prices; never a zero.
+  - *outstanding debt* — the recorded loan balances in the property's price currency.
+    A property without loans has a known debt of 0. One loan without a recorded balance,
+    or in another currency, makes the total unknown: partial sums understate the debt,
+    and conversion would invent a rate.
+  - *break-even sale price* — net invested capital + outstanding debt, **excluding
+    selling costs** (unknown before the sale). Selling at this price would repay the
+    capital left in the property and its debt.
+  - *target sale price* — break-even price + target margin × net invested capital. The
+    margin is stored per property (`targetGainRate`, 10 % by default, 0–100 %). A
+    non-positive net invested capital uses a zero base, so the target is the break-even
+    price instead of a lower figure derived from a negative base.
+  - *estimated equity* — estimated value − outstanding debt. *Estimated gain* —
+    estimated equity − net invested capital, before selling costs. A dated entry is
+    required: an amount without its date (or a date without its amount) is refused.
+  - *gap to target* — target price − estimated value; positive means the target is still
+    ahead. The status is one of: sold, no estimate, unknown (a missing input), below
+    target, target reached — printed literally, never inferred from a zero.
+  - *recorded sale* — a sale is a dated event, not a deletion: the property keeps its
+    cashflows, loans and history. *net proceeds* = sale price − selling costs −
+    outstanding debt; *gain* = net proceeds − net invested capital. The three sale
+    fields are asked together (costs may be 0), so a sale recorded through this flow
+    always carries its price; a legacy date saved without one reads « prix non
+    renseigné » and can be completed from the detail page. A gain that cannot be
+    computed reads unknown with its reason.
+  - *history* — purchase, cashflows (settled date, else due date, else creation date),
+    loan starts, valuation and sale, most recent first. A cashflow linked to a
+    transaction carries the **transaction's** amount, like the totals, so the history
+    and the figures can never disagree.
 - GitHub issues — only **open** issues and pull requests are kept, and only the
   fields needed to act: title, link, author, **assignees**, **milestone**, comment
   count, labels, dates. No description, no comment body, no source code: reading them
@@ -502,6 +562,12 @@ beside its fields.
   session that outlives a recreated database is treated as signed out (redirect to
   the login page) rather than letting the owner reach pages that read nothing and
   writes that fail on a foreign key.
+- Workspaces: every session resolves exactly one active workspace (`SessionUser.workspace`,
+  with the role held there) from the user's own memberships, server-side only. A user
+  without any membership is refused like a signed-out one, and a workspace id the user
+  is not a member of reads as "not found". The migration gives each existing user a
+  personal workspace (`ws-<userId>`) as `OWNER`; records stay owned by `userId` until
+  the scoping migration (M7-04).
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.
@@ -627,9 +693,63 @@ A single unreadable repository (renamed, moved, deleted) is counted and skipped:
 it must not cost the others. A quota or a revoked token fails the whole run
 instead, because a partial issue list would look complete.
 
-Closed issues are deleted at the next run, which only happens when every targeted
-repository was read: a repository skipped by the bound, or refused by the provider,
-still has open issues that were not seen.
+Closed issues are deleted at the next run **per repository read in full**: the issues
+of that repository the provider no longer reports as open go, and every issue of a
+repository that is no longer tracked goes too. A repository answered 304, skipped by
+the bound or refused by the provider keeps its rows — they are current (304) or
+unknown, never "closed". Milestones follow the same rule.
+
+### Conditional requests (DA-04)
+
+The per-repository issue and milestone requests are **conditional**: the validators
+GitHub returned last time (`ETag` → `If-None-Match`, `Last-Modified` →
+`If-Modified-Since`) are sent back, and a `304 Not Modified` means the stored rows of
+that repository are current. They are then neither re-normalised nor rewritten; only
+the check is recorded. GitHub does not count a 304 against the primary rate limit,
+which is what makes frequent runs cheap. The fetch bounds are unchanged.
+
+Validators live in `ProviderCacheEntry`, one row per connection and resource, keyed by
+`cacheResourceKey` = cache version + exact request URL. They are a separate table
+rather than fields on the snapshot tables because the cached resource is a *list* per
+repository, which may have no snapshot row at all (a repository with no open issue).
+No payload is cached: the rows stay in the snapshot tables. Each entry carries two
+instants, displayed in « Requêtes conditionnelles » on the integrations page:
+`checkedAt` (last successful check, 200 or 304) and `changedAt` (last time its rows
+were written from a full answer).
+
+Validators never vouch for data that is not there:
+
+- They are stored **after** the rows they describe (`saveCacheChecks` runs once
+  `saveIssues` / `saveMilestones` returned). A run that fails halfway keeps at worst an
+  old validator for old rows.
+- A full answer replaces the validators, with nothing when it carried none or carried
+  a malformed one, so a stale validator is never kept. A repository whose answer failed
+  normalisation records no check at all.
+- A 304 to a request that sent no validator is an invalid response, not "unchanged".
+- Stored metadata that is malformed is not sent, and an entry whose rows were last
+  written more than `CACHE_MAX_AGE_DAYS` (7) days ago is **expired**: no validator is
+  sent and the resource is read in full, so every resource is re-read at least weekly
+  whatever the provider says. The page shows such an entry as expired, not current.
+
+Invalidation:
+
+- *Connection removal* — entries cascade with the connection.
+- *Token change* — saving a connection (`upsertConnection`) deletes its entries: a new
+  token may see other repositories, and GitHub validators depend on the credentials.
+- *Bounds change* — the request URL carries `per_page` and the filters, so a changed
+  bound produces a new key and the old validator is never matched; the orphaned entry
+  stops being checked and is dropped after `CACHE_MAX_AGE_DAYS`.
+- *Schema or normalisation change* — bump `CACHE_VERSION`: every key changes and the
+  next run reads everything in full.
+- *Repository no longer tracked* — its entries are dropped at the next run.
+
+Not conditional: the project listing (paginated and sorted by last update, so a page's
+validator says nothing about the next page, and pruning projects needs every page),
+and GitLab (only its project listing is read).
+
+Cache validators are not secrets — they are opaque tags of public-to-the-token
+responses — but they are still read and written server-side only, scoped through the
+owner's connection.
 
 ## Architecture invariants (UX-04)
 

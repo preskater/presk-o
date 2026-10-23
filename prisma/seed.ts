@@ -3,7 +3,11 @@ import { hashPassword } from "../src/lib/auth/password";
 import { ensureCategory } from "../src/modules/budget/repository";
 import { SALARY_CATEGORY_NAME } from "../src/modules/budget/salary";
 import { PASSWORD_MIN_LENGTH } from "../src/modules/identity/domain";
-import { findOwnerByEmail, upsertOwner } from "../src/modules/identity/repository";
+import {
+  ensureDefaultWorkspace,
+  findOwnerByEmail,
+  upsertOwner,
+} from "../src/modules/identity/repository";
 
 /**
  * Creates the single owner account, or refreshes the name of the one that exists.
@@ -47,6 +51,9 @@ async function main(): Promise<void> {
     ? existing.passwordHash
     : await hashPassword(password);
   const owner = await upsertOwner({ email, name, passwordHash });
+
+  // Without a membership the owner could sign in but reach nothing (see `getSessionUser`).
+  await ensureDefaultWorkspace(owner.id);
 
   // The salary simulator books its income into a « Salaire » category: it is created here
   // so every owner has it from the start. The booking action also creates it on demand,
