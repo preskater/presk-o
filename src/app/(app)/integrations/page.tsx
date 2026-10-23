@@ -8,7 +8,9 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireModule } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
 import {
@@ -69,7 +71,11 @@ export default async function IntegrationsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await requireModule("development");
+  const user = await requireUser();
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "development")) {
+    return <ModuleDisabled moduleKey="development" workspace={user.workspace} />;
+  }
   const params = await searchParams;
   const [connections, issues, milestones, runs] = await Promise.all([
     listConnections(user.id),

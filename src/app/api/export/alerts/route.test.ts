@@ -22,7 +22,12 @@ const { GET } = await import("./route");
  * bounded read, the status filter with its fallback, ISO instants, and a reason
  * recomputed from the stored inputs — the file and the screen share the same sentence.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 function alertRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -155,5 +160,14 @@ describe("GET /api/export/alerts", () => {
     expect(lines).toHaveLength(2);
     expect(lines[1]).toContain('""urgent"",');
     expect(lines[1]).toContain("650,00");
+  });
+
+  it("leaves out the alerts of a module inactive in the workspace", async () => {
+    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+    listAlertsMock.mockResolvedValue([alertRecord()]);
+
+    const lines = await bodyOf(await GET(new Request("http://test.local/api/export/alerts")));
+
+    expect(lines).toHaveLength(1);
   });
 });

@@ -77,10 +77,11 @@ export async function requireUser(): Promise<SessionUser> {
 }
 
 /**
- * For a module's pages and Server Actions: the session check of `requireUser`, then
- * the module must be active in the session's workspace. Otherwise the answer is a
- * 404, as for a page that does not exist: the action writes nothing and the page
- * reads nothing. The key is a literal at the call site, never a value from the browser.
+ * For a module's Server Actions: the session check of `requireUser`, then the module
+ * must be active in the session's workspace. Otherwise the answer is a 404 and the
+ * action writes nothing. Pages check `hasModule` themselves and render `ModuleDisabled`,
+ * so a direct link explains the state. The key is a literal at the call site, never a
+ * value from the browser.
  */
 export async function requireModule(key: ModuleKey): Promise<SessionUser> {
   const user = await requireUser();
