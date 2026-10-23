@@ -442,7 +442,11 @@ asked for: a cascade here would silently change what a property is worth.
   predicates the explorer and the badges use, so a queue rule and a badge can never
   disagree, and it reads the **same filtered set** as the explorer, so both views
   describe the same selection. An issue may appear in several buckets — each is a
-  distinct reason to act — and each bucket is ordered oldest first (backlog order):
+  distinct reason to act. Each bucket is sorted by « Ouverte depuis », smallest lapse
+  first (most recently opened first), by default; the column headers (Sujet, Assigné à,
+  Ouverte depuis) switch the column and direction through `?queueSort=<column>.<asc|desc>`.
+  Ties fall back to repository and number, so the order is stable; an unassigned item
+  sorts as an empty name:
   - *Sans réponse* — an issue open for at least 3 days with zero comments
     (`isUnanswered`, the same rule as the "Sans réponse" badge).
   - *Pull requests anciennes* — an open pull request at least 14 days old
@@ -464,6 +468,38 @@ asked for: a cascade here would silently change what a property is worth.
   the card, rather than inventing a review state it cannot know. An issue with no
   milestone or no label is a real state, never a zero; a milestone without a due date is
   never "due soon".
+- Activity metrics (integrations page, « Indicateurs d'activité », DA-02) —
+  `buildActivityMetrics`, a pure function of the stored snapshots and a reference
+  instant `now` (the render time): the same rows and the same `now` give the same
+  figures. They read **every stored row**, not the explorer's filtered selection. The
+  card only appears once a connection has synchronised at least once, and it names the
+  last read. They describe a backlog and are never a measure of people.
+  - *Pull requests ouvertes* — the number of stored `PULL_REQUEST` rows, i.e. open at the
+    last synchronisation. Unavailable (not zero) when no connection reads pull requests
+    (GitLab does not today).
+  - *Âge médian des PR ouvertes* — the median of `floor((now − openedAt) / 1 day)` over
+    those rows; the mean of the two middle values for an even count. No open pull
+    request means no median ("—"), not an age of zero.
+  - *Dépôts inactifs* — a stored project whose last provider-reported activity is at
+    least `DEFAULT_INACTIVE_DAYS` (30) whole days before `now`. The window is that
+    threshold. The source differs per provider and is not the same signal: GitHub
+    `pushed_at` (last push, any branch), GitLab `last_activity_at` (also moved by issue
+    and merge request activity). A project without a usable date is listed as
+    *inconnue*, never counted as inactive or active. The table lists inactive and
+    undated repositories, sorted by « Dernière activité », smallest lapse first, by
+    default; its headers switch to the repository name or the other direction through
+    `?activitySort=<column>.<asc|desc>`. An undated repository always sorts last: an
+    unknown date is not "the oldest".
+  - *Avancement des jalons ouverts* — over open milestones only, the provider's closed
+    counters divided by its open + closed counters (the same counters as the milestones
+    card, which cover items not followed here). No item attached to any open milestone
+    means no figure ("—"), not 0 % or 100 %.
+  - *Délai ouverture → fusion* and *débit d'issues* — **unavailable, by decision.**
+    Snapshots keep open issues and pull requests only, and a row that disappears may
+    have been closed, merged, transferred or have left the bounded fetch; there is no
+    `mergedAt` and no closed history to compute either honestly. Providing them needs
+    an additive, bounded fetch of recently closed items (new fields or a table, a
+    migration and more provider quota) — a separate ticket, not part of DA-02.
 - Budget charts — two, each answering a question the monthly table cannot. Both reuse
   the aggregation rules above instead of defining their own, so a number in a chart
   always equals the same number in a table:

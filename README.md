@@ -123,6 +123,10 @@ Working today:
   type, assignee, label, milestone, state, text), an actionable **work queue**
   (unanswered issues, old pull requests, work without a milestone or a label, blocked
   work, milestones due soon or overdue — each item with its age and a link to the
+  provider), milestones with their due dates and progress, and bounded **activity
+  metrics** (open pull requests, their median age, inactive repositories, open-milestone
+  completion; open-to-merge time and issue throughput shown as unavailable). GitLab
+  stays on project metadata, on purpose.
   provider), and milestones with their due dates and progress. Issue and milestone
   requests are conditional (`ETag` / `Last-Modified`): an unchanged repository answers
   304 and is not rewritten, and the page shows when each was checked versus changed.
