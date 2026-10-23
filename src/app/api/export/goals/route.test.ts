@@ -96,7 +96,7 @@ describe("GET /api/export/goals", () => {
     const response = await GET(new Request("http://test.local/api/export/goals"));
 
     expect(response.status).toBe(200);
-    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.id, { take: 10_000 });
+    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.workspace.id, { take: 10_000 });
     expect(readAccountBalanceMock).not.toHaveBeenCalled();
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -120,7 +120,7 @@ describe("GET /api/export/goals", () => {
 
     const response = await GET(new Request("http://test.local/api/export/goals"));
 
-    expect(readAccountBalanceMock).toHaveBeenCalledWith(OWNER.id, "account-1");
+    expect(readAccountBalanceMock).toHaveBeenCalledWith(OWNER.workspace.id, "account-1");
 
     const lines = await bodyOf(response);
     expect(lines[1]).toBe(

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
-import { requireModule } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { currentMonthKey, formatMonthLabel, isValidMonthKey, parseMonthKey } from "@/lib/dates";
 import { readSearchParam, type SearchParamsInput } from "@/lib/search-params";
 import { TRANSACTION_TYPES, type TransactionType } from "@/modules/budget/domain";
@@ -24,7 +26,11 @@ export default async function BudgetPage({
 }: {
   searchParams: Promise<SearchParamsInput>;
 }) {
-  const user = await requireModule("budget");
+  const user = await requireUser();
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "budget")) {
+    return <ModuleDisabled moduleKey="budget" workspace={user.workspace} />;
+  }
   const params = await searchParams;
 
   const requestedMonth = readSearchParam(params, "month");
@@ -148,7 +154,7 @@ export default async function BudgetPage({
 
       {tab === "operations" ? (
         <OperationsSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           filters={filters}
           editId={editId}
@@ -162,7 +168,7 @@ export default async function BudgetPage({
 
       {tab === "analysis" ? (
         <AnalysisSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           filters={filters}
           breakdownKind={breakdownKind}
@@ -171,7 +177,7 @@ export default async function BudgetPage({
 
       {tab === "budgets" ? (
         <BudgetsSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           editBudgetId={editBudgetId}
           newBudgetCategory={newBudgetCategory}
@@ -179,11 +185,11 @@ export default async function BudgetPage({
         />
       ) : null}
 
-      {tab === "report" ? <ReportSection userId={user.id} monthKey={monthKey} /> : null}
+      {tab === "report" ? <ReportSection workspaceId={user.workspace.id} monthKey={monthKey} /> : null}
 
       {tab === "forecast" ? (
         <ForecastSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           editRecurringId={editRecurringId}
         />
@@ -191,15 +197,15 @@ export default async function BudgetPage({
 
       {tab === "goals" ? (
         <>
-          <SavingsThresholdCard userId={user.id} />
-          <GoalsSection userId={user.id} editGoalId={editGoalId} />
+          <SavingsThresholdCard workspaceId={user.workspace.id} />
+          <GoalsSection workspaceId={user.workspace.id} editGoalId={editGoalId} />
         </>
       ) : null}
 
-      {tab === "salary" ? <SalarySection userId={user.id} monthKey={monthKey} /> : null}
+      {tab === "salary" ? <SalarySection workspaceId={user.workspace.id} monthKey={monthKey} /> : null}
 
       {tab === "accounts" ? (
-        <AccountsSection userId={user.id} monthKey={monthKey} />
+        <AccountsSection workspaceId={user.workspace.id} monthKey={monthKey} />
       ) : null}
     </>
   );

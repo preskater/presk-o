@@ -46,12 +46,12 @@ const PERCENT_FORMAT = new Intl.NumberFormat("fr-FR", {
  * of rows — so opening the operations tab never pays for it.
  */
 export async function AnalysisSection({
-  userId,
+  workspaceId,
   monthKey,
   filters,
   breakdownKind,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
   filters: BudgetFilterValues;
@@ -78,22 +78,22 @@ export async function AnalysisSection({
 
   const [accounts, categories, series, cumulativeTotals, previousRead, lastYearRead] =
     await Promise.all([
-      listAccounts(userId),
-      listCategories(userId),
-      listTransactionsForSeries(userId, {
+      listAccounts(workspaceId),
+      listCategories(workspaceId),
+      listTransactionsForSeries(workspaceId, {
         from: trendStart,
         to: range.end,
         ...filters,
       }),
       // The all-time signed total, aggregated in the database: reading the rows to add
       // them up would stop at the read bound and call the page "history".
-      sumTransactionsByCurrency(userId),
-      listTransactionsForSeries(userId, {
+      sumTransactionsByCurrency(workspaceId),
+      listTransactionsForSeries(workspaceId, {
         from: previousRange.start,
         to: previousRange.end,
         ...filters,
       }),
-      listTransactionsForSeries(userId, {
+      listTransactionsForSeries(workspaceId, {
         from: lastYearRange.start,
         to: lastYearRange.end,
         ...filters,

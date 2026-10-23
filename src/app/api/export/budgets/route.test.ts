@@ -88,7 +88,7 @@ describe("GET /api/export/budgets", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(listBudgetsMock).toHaveBeenCalledWith(OWNER.id, { year: 2026, month: 9 });
+    expect(listBudgetsMock).toHaveBeenCalledWith(OWNER.workspace.id, { year: 2026, month: 9 });
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Content-Disposition")).toBe(
@@ -104,10 +104,10 @@ describe("GET /api/export/budgets", () => {
 
   it("falls back to the current month when the filter is absent or malformed", async () => {
     await GET(new Request("http://test.local/api/export/budgets"));
-    expect(listBudgetsMock).toHaveBeenLastCalledWith(OWNER.id, { year: 2026, month: 10 });
+    expect(listBudgetsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, { year: 2026, month: 10 });
 
     await GET(new Request("http://test.local/api/export/budgets?month=2026-13"));
-    expect(listBudgetsMock).toHaveBeenLastCalledWith(OWNER.id, { year: 2026, month: 10 });
+    expect(listBudgetsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, { year: 2026, month: 10 });
   });
 
   it("writes a header line even when the month has no budget", async () => {

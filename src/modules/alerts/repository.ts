@@ -5,7 +5,7 @@ import type { AlertKind, AlertRuleConfig, AlertRuleRow, AlertStatus } from "./do
 import type { AlertLifecyclePlan } from "./lifecycle";
 
 /**
- * Alert persistence (BP-05). Every statement is scoped to the owner.
+ * Alert persistence (BP-05). Every statement is scoped to the workspace.
  *
  * `applyAlertPlan` is the only writer of the lifecycle: it creates the new episodes,
  * refreshes the ones still holding (inputs and `lastSeenAt`), reopens the resolved ones
@@ -78,11 +78,11 @@ const STATUS_ORDER: AlertStatus[] = ["ACTIVE", "DISMISSED", "RESOLVED"];
  * exports a slice may pass a status and a row bound.
  */
 export async function listAlerts(
-  userId: string,
+  workspaceId: string,
   options: { status?: AlertStatus; take?: number } = {},
 ): Promise<AlertRecord[]> {
   const rows = await getPrisma().alert.findMany({
-    where: { userId, ...(options.status ? { status: options.status } : {}) },
+    where: { workspaceId, ...(options.status ? { status: options.status } : {}) },
     orderBy: { triggeredAt: "desc" },
     ...(options.take ? { take: options.take } : {}),
     select: ALERT_SELECT,
@@ -105,7 +105,7 @@ export async function listAlerts(
  * cannot raise a unique-constraint error — the other pass simply wins.
  */
 export async function applyAlertPlan(
-  userId: string,
+  workspaceId: string,
   plan: AlertLifecyclePlan,
   now: Date,
 ): Promise<void> {
@@ -114,7 +114,7 @@ export async function applyAlertPlan(
   if (plan.creates.length > 0) {
     await prisma.alert.createMany({
       data: plan.creates.map((candidate) => ({
-        userId,
+        workspaceId,
         kind: candidate.kind,
         fingerprint: candidate.fingerprint,
         status: "ACTIVE" as const,
@@ -130,13 +130,13 @@ export async function applyAlertPlan(
   const operations = [
     ...plan.refreshes.map((entry) =>
       prisma.alert.updateMany({
-        where: { id: entry.id, userId },
+        where: { id: entry.id, workspaceId },
         data: { inputs: entry.candidate.inputs as never, lastSeenAt: now },
       }),
     ),
     ...plan.reopens.map((entry) =>
       prisma.alert.updateMany({
-        where: { id: entry.id, userId },
+        where: { id: entry.id, workspaceId },
         data: {
           status: "ACTIVE" as const,
           inputs: entry.candidate.inputs as never,
@@ -151,7 +151,7 @@ export async function applyAlertPlan(
     ...(plan.resolves.length > 0
       ? [
           prisma.alert.updateMany({
-            where: { id: { in: plan.resolves }, userId },
+            where: { id: { in: plan.resolves }, workspaceId },
             data: { status: "RESOLVED" as const, resolvedAt: now },
           }),
         ]
@@ -167,9 +167,9 @@ export async function applyAlertPlan(
  * Dismisses one active alert. `false` means "not found, not yours, or not active any
  * more" — a dismissal is refused rather than rewriting a resolved episode.
  */
-export async function dismissAlert(userId: string, alertId: string, now: Date): Promise<boolean> {
+export async function dismissAlert(workspaceId: string, alertId: string, now: Date): Promise<boolean> {
   const { count } = await getPrisma().alert.updateMany({
-    where: { id: alertId, userId, status: "ACTIVE" },
+    where: { id: alertId, workspaceId, status: "ACTIVE" },
     data: { status: "DISMISSED", dismissedAt: now },
   });
 
@@ -177,9 +177,9 @@ export async function dismissAlert(userId: string, alertId: string, now: Date): 
 }
 
 /** The stored rule rows, raw: `resolveAlertRules` merges them over the defaults. */
-export async function listAlertRules(userId: string): Promise<AlertRuleRow[]> {
+export async function listAlertRules(workspaceId: string): Promise<AlertRuleRow[]> {
   const rows = await getPrisma().alertRule.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: { kind: "asc" },
   });
 
@@ -202,7 +202,7 @@ export async function listAlertRules(userId: string): Promise<AlertRuleRow[]> {
  * rather than leaving values that no rule would read.
  */
 export async function saveAlertRules(
-  userId: string,
+  workspaceId: string,
   rules: readonly AlertRuleConfig[],
 ): Promise<void> {
   const prisma = getPrisma();
@@ -212,8 +212,8 @@ export async function saveAlertRules(
       const data = ruleRowData(rule);
 
       return prisma.alertRule.upsert({
-        where: { userId_kind: { userId, kind: rule.kind } },
-        create: { userId, kind: rule.kind, ...data },
+        where: { workspaceId_kind: { workspaceId, kind: rule.kind } },
+        create: { workspaceId, kind: rule.kind, ...data },
         update: data,
       });
     }),

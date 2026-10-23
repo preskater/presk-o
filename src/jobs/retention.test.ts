@@ -5,7 +5,7 @@ const pruneSyncRunsMock = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   getPrisma: () => ({
-    user: { findMany: (...args: unknown[]) => findManyMock(...args) },
+    workspace: { findMany: (...args: unknown[]) => findManyMock(...args) },
   }),
 }));
 vi.mock("@/modules/integrations/repository", () => ({
@@ -31,29 +31,29 @@ describe("retentionCutoff", () => {
 
 describe("cleanUpSyncRuns", () => {
   beforeEach(() => {
-    findManyMock.mockReset().mockResolvedValue([{ id: "owner-1" }, { id: "owner-2" }]);
+    findManyMock.mockReset().mockResolvedValue([{ id: "ws-owner-1" }, { id: "ws-owner-2" }]);
     pruneSyncRunsMock.mockReset().mockResolvedValueOnce(3).mockResolvedValueOnce(4);
   });
 
-  it("prunes every owner with the same cutoff and sums the deletions", async () => {
+  it("prunes every workspace with the same cutoff and sums the deletions", async () => {
     const now = new Date(Date.UTC(2026, 9, 5));
     const result = await cleanUpSyncRuns({ now });
 
     expect(pruneSyncRunsMock).toHaveBeenNthCalledWith(1, {
-      userId: "owner-1",
+      workspaceId: "ws-owner-1",
       olderThan: retentionCutoff(now),
     });
     expect(pruneSyncRunsMock).toHaveBeenNthCalledWith(2, {
-      userId: "owner-2",
+      workspaceId: "ws-owner-2",
       olderThan: retentionCutoff(now),
     });
-    expect(result).toEqual({ owners: 2, deleted: 7 });
+    expect(result).toEqual({ workspaces: 2, deleted: 7 });
   });
 
-  it("is a no-op when no owner exists yet", async () => {
+  it("is a no-op when no workspace exists yet", async () => {
     findManyMock.mockResolvedValue([]);
 
-    expect(await cleanUpSyncRuns()).toEqual({ owners: 0, deleted: 0 });
+    expect(await cleanUpSyncRuns()).toEqual({ workspaces: 0, deleted: 0 });
     expect(pruneSyncRunsMock).not.toHaveBeenCalled();
   });
 });

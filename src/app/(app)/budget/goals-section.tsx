@@ -127,19 +127,19 @@ function ContributionCell({ progress, currency }: { progress: GoalProgress; curr
  * or the goal is reached.
  */
 export async function GoalsSection({
-  userId,
+  workspaceId,
   editGoalId,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `?editGoal=`, an identifier to look up: a foreign one finds nothing. */
   editGoalId?: string;
 }) {
   const [goals, accounts, editTarget, contributionSums, contributionLog] = await Promise.all([
-    listGoals(userId),
-    listAccounts(userId),
-    editGoalId ? findGoal(userId, editGoalId) : Promise.resolve(null),
-    sumGoalContributions(userId),
-    listGoalContributionsForOwner(userId, { take: CONTRIBUTION_LIST_LIMIT }),
+    listGoals(workspaceId),
+    listAccounts(workspaceId),
+    editGoalId ? findGoal(workspaceId, editGoalId) : Promise.resolve(null),
+    sumGoalContributions(workspaceId),
+    listGoalContributionsForOwner(workspaceId, { take: CONTRIBUTION_LIST_LIMIT }),
   ]);
 
   // The log arrives owner-wide and bounded (most recent first); the per-goal view is
@@ -170,7 +170,7 @@ export async function GoalsSection({
   const balances = await Promise.all(
     goals.map((goal) =>
       goal.accountId
-        ? readAccountBalance(userId, goal.accountId).then(({ transactionCount, balance }) =>
+        ? readAccountBalance(workspaceId, goal.accountId).then(({ transactionCount, balance }) =>
             transactionCount === 0 ? null : balance,
           )
         : Promise.resolve(null),
