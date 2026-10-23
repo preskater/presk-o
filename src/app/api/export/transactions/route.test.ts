@@ -92,11 +92,11 @@ describe("GET /api/export/transactions", () => {
     expect(response.status).toBe(200);
     expect(listTransactionsMock).toHaveBeenCalledTimes(1);
 
-    const [userId, options] = listTransactionsMock.mock.calls[0] as [
+    const [workspaceId, options] = listTransactionsMock.mock.calls[0] as [
       string,
       { from: Date; to: Date; take: number },
     ];
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(options.from.toISOString()).toBe("2026-09-01T00:00:00.000Z");
     // Exclusive upper bound: the 1st of the next month is not part of September.
     expect(options.to.toISOString()).toBe("2026-10-01T00:00:00.000Z");

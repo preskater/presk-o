@@ -71,18 +71,18 @@ export default async function RealEstatePage({
     return <ModuleDisabled moduleKey="real-estate" workspace={user.workspace} />;
   }
   const [properties, recentTransactions, loans] = await Promise.all([
-    listProperties(user.id),
+    listProperties(user.workspace.id),
     // A cashflow entry can be linked to an operation recorded in the budget, when the
     // budget module is active in this workspace.
     hasModule(user.workspace, "budget")
-      ? listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT })
+      ? listTransactions(user.workspace.id, { take: TRANSACTION_OPTION_LIMIT })
       : [],
-    listLoans(user.id),
+    listLoans(user.workspace.id),
   ]);
 
   // The edited loan is looked up owner-scoped: a foreign or unknown id falls back to
   // the creation form rather than revealing anything.
-  const editingLoan = editLoanId ? await findLoan(user.id, editLoanId) : null;
+  const editingLoan = editLoanId ? await findLoan(user.workspace.id, editLoanId) : null;
 
   // Reduced to strings: the form is a client component and never receives a Decimal.
   const transactionOptions: TransactionOption[] = recentTransactions.map((transaction) => ({

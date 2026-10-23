@@ -30,7 +30,7 @@ export async function connectProviderAction(formData: FormData): Promise<void> {
   }
 
   await upsertConnection({
-    userId: user.id,
+    workspaceId: user.workspace.id,
     provider: parsed.data.provider,
     instanceUrl: parsed.data.instanceUrl,
     externalOwner: parsed.data.externalOwner,
@@ -53,7 +53,7 @@ export async function syncConnectionAction(formData: FormData): Promise<void> {
 
   // A manual one-shot run. Scheduled synchronisations use the same function from
   // a scheduler outside the web process.
-  const result = await synchroniseConnection(user.id, connectionId);
+  const result = await synchroniseConnection(user.workspace.id, connectionId);
 
   revalidatePath("/integrations");
 

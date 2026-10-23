@@ -45,7 +45,7 @@ const TYPE_LABELS: Record<"INCOME" | "EXPENSE" | "TRANSFER", string> = {
  * selected.
  */
 export async function OperationsSection({
-  userId,
+  workspaceId,
   monthKey,
   filters,
   editId,
@@ -55,7 +55,7 @@ export async function OperationsSection({
   page,
   scopeAll,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
   filters: BudgetFilterValues;
@@ -94,24 +94,24 @@ export async function OperationsSection({
     editLink,
     copyTarget,
   ] = await Promise.all([
-    listAccounts(userId),
-    listCategories(userId),
-    listTransactions(userId, {
+    listAccounts(workspaceId),
+    listCategories(workspaceId),
+    listTransactions(workspaceId, {
       ...readFilters,
       sort,
       dir,
       skip: (page - 1) * TRANSACTION_PAGE_SIZE,
       take: TRANSACTION_PAGE_SIZE,
     }),
-    countTransactions(userId, readFilters),
+    countTransactions(workspaceId, readFilters),
     // Deliberately unfiltered: a suggestion is worth offering whatever month or
     // account is being displayed.
-    listLabelHistory(userId),
-    editId ? findTransaction(userId, editId) : Promise.resolve(null),
+    listLabelHistory(workspaceId),
+    editId ? findTransaction(workspaceId, editId) : Promise.resolve(null),
     // Read only while editing: the form warns when a correction also moves the totals of
     // a property, which is the case only for a transaction a cashflow points at.
-    editId ? findCashflowLinkedToTransaction(userId, editId) : Promise.resolve(null),
-    copyId ? findTransaction(userId, copyId) : Promise.resolve(null),
+    editId ? findCashflowLinkedToTransaction(workspaceId, editId) : Promise.resolve(null),
+    copyId ? findTransaction(workspaceId, copyId) : Promise.resolve(null),
   ]);
 
   const labelSuggestions = buildLabelSuggestions(labelHistory);

@@ -65,13 +65,13 @@ export async function createRecurringEntryAction(values: unknown): Promise<Actio
   const input = parsed.data;
 
   try {
-    const account = await findAccount(user.id, input.accountId);
+    const account = await findAccount(user.workspace.id, input.accountId);
     if (!account) {
       return rejectedResult("accountId", "Compte introuvable.");
     }
 
     const category: CategorySummary | null = input.categoryId
-      ? await findCategory(user.id, input.categoryId)
+      ? await findCategory(user.workspace.id, input.categoryId)
       : null;
 
     if (input.categoryId && !category) {
@@ -84,7 +84,7 @@ export async function createRecurringEntryAction(values: unknown): Promise<Actio
     }
 
     await createRecurringEntry({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       accountId: account.id,
       categoryId: input.categoryId,
       type: input.type,
@@ -122,18 +122,18 @@ export async function updateRecurringEntryAction(values: unknown): Promise<Actio
   const input = parsed.data;
 
   try {
-    const entry = await findRecurringEntry(user.id, input.id);
+    const entry = await findRecurringEntry(user.workspace.id, input.id);
     if (!entry) {
       return rejectedResult("id", "Série introuvable : elle a peut-être été supprimée entre-temps.");
     }
 
-    const account = await findAccount(user.id, input.accountId);
+    const account = await findAccount(user.workspace.id, input.accountId);
     if (!account) {
       return rejectedResult("accountId", "Compte introuvable.");
     }
 
     const category: CategorySummary | null = input.categoryId
-      ? await findCategory(user.id, input.categoryId)
+      ? await findCategory(user.workspace.id, input.categoryId)
       : null;
 
     if (input.categoryId && !category) {
@@ -149,7 +149,7 @@ export async function updateRecurringEntryAction(values: unknown): Promise<Actio
     const cadenceMoved = startDateMoved || input.frequency !== entry.frequency;
 
     if (startDateMoved) {
-      const decided = await countDecidedOccurrences(user.id, entry.id);
+      const decided = await countDecidedOccurrences(user.workspace.id, entry.id);
       const refused = startDateChangeRefusedReason(decided);
 
       if (refused) {
@@ -157,7 +157,7 @@ export async function updateRecurringEntryAction(values: unknown): Promise<Actio
       }
     }
 
-    const updated = await updateRecurringEntry(user.id, entry.id, {
+    const updated = await updateRecurringEntry(user.workspace.id, entry.id, {
       accountId: account.id,
       categoryId: input.categoryId,
       type: input.type,
@@ -175,7 +175,7 @@ export async function updateRecurringEntryAction(values: unknown): Promise<Actio
     if (cadenceMoved) {
       // The pending rows were computed on the old rule; the next month opening rebuilds
       // the matching ones. Decided occurrences are history and stay untouched.
-      await deletePendingOccurrences(user.id, entry.id);
+      await deletePendingOccurrences(user.workspace.id, entry.id);
     }
   } catch (error) {
     return unexpectedResult("updateRecurringEntry", error);
@@ -202,7 +202,7 @@ export async function deleteRecurringEntryAction(values: unknown): Promise<Actio
   }
 
   try {
-    const decided = await countDecidedOccurrences(user.id, parsed.data.id);
+    const decided = await countDecidedOccurrences(user.workspace.id, parsed.data.id);
     if (decided > 0) {
       return rejectedResult(
         "id",
@@ -210,7 +210,7 @@ export async function deleteRecurringEntryAction(values: unknown): Promise<Actio
       );
     }
 
-    const deleted = await deleteRecurringEntry(user.id, parsed.data.id);
+    const deleted = await deleteRecurringEntry(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Série introuvable : elle a peut-être déjà été supprimée.");
     }
@@ -242,7 +242,7 @@ export async function confirmRecurringOccurrenceAction(values: unknown): Promise
   }
 
   try {
-    const occurrence = await findRecurringOccurrence(user.id, parsed.data.id);
+    const occurrence = await findRecurringOccurrence(user.workspace.id, parsed.data.id);
     if (!occurrence) {
       return rejectedResult("id", "Échéance introuvable : rechargez la page.");
     }
@@ -252,7 +252,7 @@ export async function confirmRecurringOccurrenceAction(values: unknown): Promise
       return rejectedResult("id", blocked);
     }
 
-    const entry = await findRecurringEntry(user.id, occurrence.recurringId);
+    const entry = await findRecurringEntry(user.workspace.id, occurrence.recurringId);
     if (!entry) {
       return rejectedResult(
         "id",
@@ -260,7 +260,7 @@ export async function confirmRecurringOccurrenceAction(values: unknown): Promise
       );
     }
 
-    const resolved = await resolveTransactionInput(user.id, {
+    const resolved = await resolveTransactionInput(user.workspace.id, {
       accountId: entry.accountId,
       categoryId: entry.categoryId,
       type: entry.type,
@@ -276,7 +276,7 @@ export async function confirmRecurringOccurrenceAction(values: unknown): Promise
     }
 
     const transaction = await createTransaction({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       accountId: resolved.account.id,
       categoryId: entry.categoryId,
       type: entry.type,
@@ -288,7 +288,7 @@ export async function confirmRecurringOccurrenceAction(values: unknown): Promise
       externalRef: forecastOccurrenceRef(occurrence.id),
     });
 
-    const decided = await decideRecurringOccurrence(user.id, occurrence.id, {
+    const decided = await decideRecurringOccurrence(user.workspace.id, occurrence.id, {
       status: "CONFIRMED",
       transactionId: transaction.id,
     });
@@ -328,7 +328,7 @@ async function decideOccurrence(
   }
 
   try {
-    const occurrence = await findRecurringOccurrence(user.id, parsed.data.id);
+    const occurrence = await findRecurringOccurrence(user.workspace.id, parsed.data.id);
     if (!occurrence) {
       return rejectedResult("id", "Échéance introuvable : rechargez la page.");
     }
@@ -338,7 +338,7 @@ async function decideOccurrence(
       return rejectedResult("id", blocked);
     }
 
-    const decided = await decideRecurringOccurrence(user.id, occurrence.id, { status });
+    const decided = await decideRecurringOccurrence(user.workspace.id, occurrence.id, { status });
     if (!decided) {
       return rejectedResult(
         "id",

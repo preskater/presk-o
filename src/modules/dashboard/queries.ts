@@ -97,7 +97,7 @@ export type DashboardOverview = {
 };
 
 export async function getDashboardOverview(
-  userId: string,
+  workspaceId: string,
   options: { modules: readonly ModuleKey[]; now?: Date },
 ): Promise<DashboardOverview> {
   const now = options.now ?? new Date();
@@ -109,12 +109,12 @@ export async function getDashboardOverview(
     options.modules.includes(key) ? query() : Promise.resolve(null);
 
   const [budgetSections, propertyCount, connections, alerts] = await Promise.all([
-    read("budget", () => readBudgetSections(userId, { year, month, range })),
-    read("real-estate", () => countProperties(userId)),
-    read("development", () => listConnections(userId)),
+    read("budget", () => readBudgetSections(workspaceId, { year, month, range })),
+    read("real-estate", () => countProperties(workspaceId)),
+    read("development", () => listConnections(workspaceId)),
     // The stored episodes: the page runs the evaluation pass before this read, so the
     // banner shows what the engine just found, not what it found last time.
-    listAlerts(userId),
+    listAlerts(workspaceId),
   ]);
 
   return {
@@ -148,21 +148,21 @@ export async function getDashboardOverview(
 }
 
 async function readBudgetSections(
-  userId: string,
+  workspaceId: string,
   { year, month, range }: { year: number; month: number; range: ReturnType<typeof monthRange> },
 ): Promise<{ budget: DashboardBudgetSummary; budgetTracking: DashboardBudgetTracking }> {
   const [monthTransactions, transactionCount, accounts, monthBudgets, monthSeries, cumulativeByCurrency] =
     await Promise.all([
-      listTransactions(userId, { from: range.start, to: range.end }),
-      countTransactions(userId),
-      listAccounts(userId),
-      listBudgets(userId, { year, month }),
+      listTransactions(workspaceId, { from: range.start, to: range.end }),
+      countTransactions(workspaceId),
+      listAccounts(workspaceId),
+      listBudgets(workspaceId, { year, month }),
       // The same read as the 'Suivi' tab, so both screens compare the budgets to the same
       // transactions; reaching the bound is reported through `truncated`.
-      listTransactionsForSeries(userId, { from: range.start, to: range.end }),
+      listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
       // The all-time signed total, aggregated in the database: reading rows to add them up
       // would stop at the page bound and call a truncated sum "the balance".
-      sumTransactionsByCurrency(userId),
+      sumTransactionsByCurrency(workspaceId),
     ]);
 
   const budgetTotals = summariseBudgetReport(

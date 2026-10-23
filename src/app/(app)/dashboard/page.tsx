@@ -24,10 +24,10 @@ export default async function DashboardPage() {
 	// One bounded evaluation pass before reading anything: the warnings below describe the
 	// data of this visit, and the pass never writes to the ledger. The alert page runs the
 	// same pass, so both screens tell the same story.
-	await refreshAlerts(user.id);
+	await refreshAlerts(user.workspace.id);
 
 	// Only the active modules are read and shown; the others leave no card behind.
-	const overview = await getDashboardOverview(user.id, { modules: user.workspace.modules });
+	const overview = await getDashboardOverview(user.workspace.id, { modules: user.workspace.modules });
 
 	const { alerts, budget, budgetTracking, realEstate, integrations, monthKey, monthLabel } =
 		overview;

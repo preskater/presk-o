@@ -44,7 +44,7 @@ export async function GET(request: Request): Promise<Response> {
   const rawStatus = url.searchParams.get("status");
   const status = ALERT_STATUSES.find((value) => value === rawStatus);
 
-  const alerts = await listAlerts(user.id, { status, take: EXPORT_ROW_LIMIT });
+  const alerts = await listAlerts(user.workspace.id, { status, take: EXPORT_ROW_LIMIT });
 
   // Same scope as the page: nothing from a module inactive in the workspace.
   const rows: AlertRow[] = alerts

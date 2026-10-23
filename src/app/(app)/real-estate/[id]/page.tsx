@@ -84,7 +84,7 @@ export default async function PropertyDetailPage({
   if (!hasModule(user.workspace, "real-estate")) {
     return <ModuleDisabled moduleKey="real-estate" workspace={user.workspace} />;
   }
-  const property = await getPropertyDetail(user.id, id);
+  const property = await getPropertyDetail(user.workspace.id, id);
 
   if (!property) {
     notFound();

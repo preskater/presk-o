@@ -37,9 +37,9 @@ export default async function AlertsPage() {
   const user = await requireUser();
 
   const now = new Date();
-  await refreshAlerts(user.id, { now });
+  await refreshAlerts(user.workspace.id, { now });
 
-  const [allAlerts, ruleRows] = await Promise.all([listAlerts(user.id), listAlertRules(user.id)]);
+  const [allAlerts, ruleRows] = await Promise.all([listAlerts(user.workspace.id), listAlertRules(user.workspace.id)]);
   // An inactive module's alerts stay stored, untouched, and come back with the module.
   const alerts = allAlerts.filter((alert) => isAlertVisible(alert.kind, user.workspace.modules));
 

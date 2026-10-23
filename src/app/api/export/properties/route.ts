@@ -58,7 +58,7 @@ export async function GET(): Promise<Response> {
     return moduleUnavailableResponse();
   }
 
-  const properties = await listProperties(user.id);
+  const properties = await listProperties(user.workspace.id);
 
   const rows: PropertyRow[] = properties.map((property) => ({
     name: property.name,

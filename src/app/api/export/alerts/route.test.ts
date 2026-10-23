@@ -73,7 +73,7 @@ describe("GET /api/export/alerts", () => {
     const response = await GET(new Request("http://test.local/api/export/alerts"));
 
     expect(response.status).toBe(200);
-    expect(listAlertsMock).toHaveBeenCalledWith(OWNER.id, {
+    expect(listAlertsMock).toHaveBeenCalledWith(OWNER.workspace.id, {
       status: undefined,
       take: 10_000,
     });
@@ -116,13 +116,13 @@ describe("GET /api/export/alerts", () => {
 
   it("forwards a valid status filter and ignores an unknown one", async () => {
     await GET(new Request("http://test.local/api/export/alerts?status=RESOLVED"));
-    expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.id, {
+    expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
       status: "RESOLVED",
       take: 10_000,
     });
 
     await GET(new Request("http://test.local/api/export/alerts?status=resolved"));
-    expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.id, {
+    expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
       status: undefined,
       take: 10_000,
     });

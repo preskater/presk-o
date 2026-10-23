@@ -22,7 +22,7 @@ export default async function BudgetImportPage() {
   if (!hasModule(user.workspace, "budget")) {
     return <ModuleDisabled moduleKey="budget" workspace={user.workspace} />;
   }
-  const accounts = await listAccounts(user.id);
+  const accounts = await listAccounts(user.workspace.id);
 
   return (
     <>

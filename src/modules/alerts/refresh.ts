@@ -46,7 +46,7 @@ export type AlertRefreshSummary = {
 };
 
 export async function refreshAlerts(
-  userId: string,
+  workspaceId: string,
   options: { now?: Date } = {},
 ): Promise<AlertRefreshSummary> {
   const now = options.now ?? new Date();
@@ -56,14 +56,14 @@ export async function refreshAlerts(
 
   const [ruleRows, accounts, balanceTotals, budgets, monthSeries, connections, dueCashflows, existing] =
     await Promise.all([
-      listAlertRules(userId),
-      listAccounts(userId),
-      listAccountBalanceTotals(userId),
-      listBudgets(userId, { year, month }),
-      listTransactionsForSeries(userId, { from: range.start, to: range.end }),
-      listConnections(userId),
-      listDueCashflows(userId, { until: now }),
-      listAlerts(userId),
+      listAlertRules(workspaceId),
+      listAccounts(workspaceId),
+      listAccountBalanceTotals(workspaceId),
+      listBudgets(workspaceId, { year, month }),
+      listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
+      listConnections(workspaceId),
+      listDueCashflows(workspaceId, { until: now }),
+      listAlerts(workspaceId),
     ]);
 
   const rules = resolveAlertRules(ruleRows);
@@ -104,7 +104,7 @@ export async function refreshAlerts(
     candidates,
   );
 
-  await applyAlertPlan(userId, plan, now);
+  await applyAlertPlan(workspaceId, plan, now);
 
   const statusById = new Map(existing.map((alert) => [alert.id, alert.status]));
   const resolvedActive = plan.resolves.filter((id) => statusById.get(id) === "ACTIVE").length;

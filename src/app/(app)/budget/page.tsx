@@ -154,7 +154,7 @@ export default async function BudgetPage({
 
       {tab === "operations" ? (
         <OperationsSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           filters={filters}
           editId={editId}
@@ -168,7 +168,7 @@ export default async function BudgetPage({
 
       {tab === "analysis" ? (
         <AnalysisSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           filters={filters}
           breakdownKind={breakdownKind}
@@ -177,7 +177,7 @@ export default async function BudgetPage({
 
       {tab === "budgets" ? (
         <BudgetsSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           editBudgetId={editBudgetId}
           newBudgetCategory={newBudgetCategory}
@@ -185,11 +185,11 @@ export default async function BudgetPage({
         />
       ) : null}
 
-      {tab === "report" ? <ReportSection userId={user.id} monthKey={monthKey} /> : null}
+      {tab === "report" ? <ReportSection workspaceId={user.workspace.id} monthKey={monthKey} /> : null}
 
       {tab === "forecast" ? (
         <ForecastSection
-          userId={user.id}
+          workspaceId={user.workspace.id}
           monthKey={monthKey}
           editRecurringId={editRecurringId}
         />
@@ -197,15 +197,15 @@ export default async function BudgetPage({
 
       {tab === "goals" ? (
         <>
-          <SavingsThresholdCard userId={user.id} />
-          <GoalsSection userId={user.id} editGoalId={editGoalId} />
+          <SavingsThresholdCard workspaceId={user.workspace.id} />
+          <GoalsSection workspaceId={user.workspace.id} editGoalId={editGoalId} />
         </>
       ) : null}
 
-      {tab === "salary" ? <SalarySection userId={user.id} monthKey={monthKey} /> : null}
+      {tab === "salary" ? <SalarySection workspaceId={user.workspace.id} monthKey={monthKey} /> : null}
 
       {tab === "accounts" ? (
-        <AccountsSection userId={user.id} monthKey={monthKey} />
+        <AccountsSection workspaceId={user.workspace.id} monthKey={monthKey} />
       ) : null}
     </>
   );

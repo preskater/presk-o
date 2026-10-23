@@ -80,11 +80,11 @@ export default async function IntegrationsPage({
   }
   const params = await searchParams;
   const [connections, issues, milestones, runs, cacheEntries] = await Promise.all([
-    listConnections(user.id),
-    listIssues(user.id),
-    listMilestones(user.id),
-    listSyncRuns(user.id),
-    listProviderCache(user.id),
+    listConnections(user.workspace.id),
+    listIssues(user.workspace.id),
+    listMilestones(user.workspace.id),
+    listSyncRuns(user.workspace.id),
+    listProviderCache(user.workspace.id),
   ]);
 
   // One clock for the whole page: a connection stale at render is stale everywhere.

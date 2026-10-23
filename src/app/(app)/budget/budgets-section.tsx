@@ -33,13 +33,13 @@ const CATEGORY_KIND_LABELS: Record<CategoryKind, string> = {
  * belongs to this tab because budgets are consulted month by month, like the operations.
  */
 export async function BudgetsSection({
-  userId,
+  workspaceId,
   monthKey,
   editBudgetId,
   newBudgetCategory,
   newBudgetCurrency,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
   /** `?editBudget=`, an identifier to look up: a foreign one finds nothing. */
@@ -63,11 +63,11 @@ export async function BudgetsSection({
   const averageEnd = monthRange(year, month).start;
 
   const [categories, budgets, editBudgetTarget, averageRead] = await Promise.all([
-    listCategories(userId),
+    listCategories(workspaceId),
     // The budgets of the displayed month: the section never mixes months or currencies.
-    listBudgets(userId, { year, month }),
-    editBudgetId ? findBudget(userId, editBudgetId) : Promise.resolve(null),
-    listTransactionsForSeries(userId, { from: averageStart.start, to: averageEnd }),
+    listBudgets(workspaceId, { year, month }),
+    editBudgetId ? findBudget(workspaceId, editBudgetId) : Promise.resolve(null),
+    listTransactionsForSeries(workspaceId, { from: averageStart.start, to: averageEnd }),
   ]);
 
   const averages = averageRead.truncated

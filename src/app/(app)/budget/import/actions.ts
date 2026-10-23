@@ -54,7 +54,7 @@ export async function importTransactionsAction(
   const input = parsed.data;
 
   try {
-    const account = await findManagedAccount(user.id, input.accountId);
+    const account = await findManagedAccount(user.workspace.id, input.accountId);
     if (!account) {
       return {
         status: "invalid",
@@ -89,13 +89,13 @@ export async function importTransactionsAction(
 
     const [candidates, categories] = await Promise.all([
       listImportCandidates({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         accountId: account.id,
         from: minDate,
         to: scanEnd,
         take: IMPORT_SCAN_LIMIT,
       }),
-      listCategories(user.id),
+      listCategories(user.workspace.id),
     ]);
 
     if (candidates.truncated) {
@@ -169,7 +169,7 @@ export async function importTransactionsAction(
       }
 
       toInsert.push({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         accountId: account.id,
         categoryId,
         type: kind,
