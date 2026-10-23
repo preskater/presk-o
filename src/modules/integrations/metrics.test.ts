@@ -4,6 +4,7 @@ import {
   DEFAULT_INACTIVE_DAYS,
   median,
   projectLastActivity,
+  sortRepositoryActivity,
   type MetricIssue,
   type MetricProject,
 } from "./metrics";
@@ -194,5 +195,35 @@ describe("buildActivityMetrics — milestones", () => {
     });
 
     expect(metrics.milestones).toEqual({ openCount: 2, closedCount: 1, openCompletion: 0.5 });
+  });
+});
+
+describe("sortRepositoryActivity", () => {
+  const rows = [
+    { name: "acme/old", lastActivityAt: daysAgo(95), idleDays: 95 },
+    { name: "acme/unknown", lastActivityAt: null, idleDays: null },
+    { name: "acme/recent", lastActivityAt: daysAgo(31), idleDays: 31 },
+    { name: "acme/mid", lastActivityAt: daysAgo(40), idleDays: 40 },
+  ];
+
+  it("puts the smallest lapse first by activity, unknown dates last", () => {
+    expect(
+      sortRepositoryActivity(rows, { key: "activity", direction: "asc" }).map((row) => row.name),
+    ).toEqual(["acme/recent", "acme/mid", "acme/old", "acme/unknown"]);
+  });
+
+  it("keeps unknown dates last when the order is reversed", () => {
+    expect(
+      sortRepositoryActivity(rows, { key: "activity", direction: "desc" }).map((row) => row.name),
+    ).toEqual(["acme/old", "acme/mid", "acme/recent", "acme/unknown"]);
+  });
+
+  it("sorts by repository name in both directions", () => {
+    expect(
+      sortRepositoryActivity(rows, { key: "repository", direction: "asc" }).map((row) => row.name),
+    ).toEqual(["acme/mid", "acme/old", "acme/recent", "acme/unknown"]);
+    expect(
+      sortRepositoryActivity(rows, { key: "repository", direction: "desc" }).map((row) => row.name)[0],
+    ).toBe("acme/unknown");
   });
 });

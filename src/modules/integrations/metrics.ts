@@ -1,3 +1,4 @@
+import { directionFactor, type TableSort } from "@/lib/table-sort";
 import type { IssueKind } from "./domain";
 import { ageInDays } from "./issues";
 import { isMilestoneOpen, type MilestoneLike } from "./milestones";
@@ -20,6 +21,16 @@ import { isMilestoneOpen, type MilestoneLike } from "./milestones";
 
 /** A repository with no recorded activity for this many days reads as inactive. */
 export const DEFAULT_INACTIVE_DAYS = 30;
+
+/** Columns the repository activity table can be sorted by. */
+export const ACTIVITY_SORT_KEYS = ["repository", "activity"] as const;
+export type ActivitySortKey = (typeof ACTIVITY_SORT_KEYS)[number];
+
+/** Default: "Dernière activité", smallest lapse first. */
+export const DEFAULT_ACTIVITY_SORT: TableSort<ActivitySortKey> = {
+  key: "activity",
+  direction: "asc",
+};
 
 export const UNAVAILABLE_REASONS = {
   openToMerge:
@@ -102,6 +113,31 @@ export function projectLastActivity(metrics: Record<string, unknown> | null): Da
   const parsed = typeof value === "string" ? Date.parse(value) : Number.NaN;
 
   return Number.isNaN(parsed) ? null : new Date(parsed);
+}
+
+/**
+ * Orders the repository activity table. By activity, a smaller lapse (more recent
+ * activity) comes first ascending; a repository without a known date is always listed
+ * last, whatever the direction — an unknown date is not "the oldest".
+ */
+export function sortRepositoryActivity<TRow extends RepositoryActivity>(
+  rows: readonly TRow[],
+  sort: TableSort<ActivitySortKey>,
+): TRow[] {
+  const factor = directionFactor(sort.direction);
+
+  return [...rows].sort((left, right) => {
+    if (sort.key === "activity") {
+      if (left.idleDays === null || right.idleDays === null) {
+        return (left.idleDays === null ? 1 : 0) - (right.idleDays === null ? 1 : 0) ||
+          left.name.localeCompare(right.name);
+      }
+
+      return factor * (left.idleDays - right.idleDays) || left.name.localeCompare(right.name);
+    }
+
+    return factor * left.name.localeCompare(right.name);
+  });
 }
 
 export function buildActivityMetrics(

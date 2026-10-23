@@ -1,7 +1,15 @@
-import { Badge, Card, StatCard, TableShell, tdClass, thClass } from "@/components/ui";
+import { SortableHeader } from "@/components/sortable-header";
+import { Badge, Card, StatCard, TableShell, tdClass } from "@/components/ui";
 import { formatDateOnly, formatInstant } from "@/lib/dates";
 import { describeAge } from "@/modules/integrations/issues";
-import type { ActivityMetrics, Unavailable } from "@/modules/integrations/metrics";
+import type { SearchParamsInput } from "@/lib/search-params";
+import type { TableSort } from "@/lib/table-sort";
+import {
+  sortRepositoryActivity,
+  type ActivityMetrics,
+  type ActivitySortKey,
+  type Unavailable,
+} from "@/modules/integrations/metrics";
 
 /**
  * Development activity metrics (DA-02).
@@ -13,8 +21,14 @@ import type { ActivityMetrics, Unavailable } from "@/modules/integrations/metric
 export function ActivityMetricsCard({
   metrics,
   lastSyncedAt,
+  sort,
+  params,
 }: {
   metrics: ActivityMetrics;
+  /** Order of the repository table, from the `activitySort` URL parameter. */
+  sort: TableSort<ActivitySortKey>;
+  /** Current URL parameters, kept by the sort links. */
+  params: SearchParamsInput;
   /** Last successful synchronisation of any connection, if any. */
   lastSyncedAt: Date | null;
 }) {
@@ -23,7 +37,8 @@ export function ActivityMetricsCard({
     { label: "Délai ouverture → fusion", metric: metrics.openToMerge },
     { label: "Débit d'issues", metric: metrics.issueThroughput },
   ];
-  const quiet = [...repositories.inactive, ...repositories.unknown];
+  const quiet = sortRepositoryActivity([...repositories.inactive, ...repositories.unknown], sort);
+  const sortProps = { sort, params, param: "activitySort", pathname: "/integrations" };
 
   return (
     <Card
@@ -94,8 +109,8 @@ export function ActivityMetricsCard({
           <TableShell caption="Dépôts inactifs ou sans date d'activité">
             <thead>
               <tr>
-                <th scope="col" className={thClass}>Dépôt</th>
-                <th scope="col" className={thClass}>Dernière activité</th>
+                <SortableHeader label="Dépôt" column="repository" {...sortProps} />
+                <SortableHeader label="Dernière activité" column="activity" {...sortProps} />
               </tr>
             </thead>
             <tbody>
