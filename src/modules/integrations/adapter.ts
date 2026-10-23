@@ -257,6 +257,18 @@ export function parseRetryAfterSeconds(response: Response): number | undefined {
   return Number.isFinite(seconds) ? seconds : undefined;
 }
 
+/**
+ * Whether a repository has a description: `null` when the payload did not say (the
+ * key is absent), which the health indicators show as unavailable rather than missing.
+ */
+export function descriptionPresence(description: unknown): boolean | null {
+  if (description === undefined) {
+    return null;
+  }
+
+  return typeof description === "string" && description.trim().length > 0;
+}
+
 /** Validates one normalised project, so a malformed payload fails loudly. */
 export function assertProjectShape(
   project: Partial<{ externalId: unknown; externalUrl: unknown; name: unknown }>,

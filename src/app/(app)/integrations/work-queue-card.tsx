@@ -1,9 +1,13 @@
 import Link from "next/link";
+import { SortableHeader } from "@/components/sortable-header";
 import { Badge, Card, ChevronDown, EmptyState, Notice, TableShell, tdClass, thClass } from "@/components/ui";
+import type { SearchParamsInput } from "@/lib/search-params";
+import type { TableSort } from "@/lib/table-sort";
 import { formatDateOnly, formatInstant } from "@/lib/dates";
 import { describeAge } from "@/modules/integrations/issues";
 import type {
   QueueMilestone,
+  QueueSortKey,
   WorkQueue,
 } from "@/modules/integrations/work-queue";
 
@@ -22,8 +26,14 @@ export function WorkQueueCard({
   queue,
   issueTrackingConnected,
   lastSyncedAt,
+  sort,
+  params,
 }: {
   queue: WorkQueue;
+  /** Order of every bucket, from the `queueSort` URL parameter. */
+  sort: TableSort<QueueSortKey>;
+  /** Current URL parameters, kept by the sort links. */
+  params: SearchParamsInput;
   /** True when at least one connection fetches issues (GitHub today). */
   issueTrackingConnected: boolean;
   /** Last successful synchronisation of those connections, if any. */
@@ -33,6 +43,7 @@ export function WorkQueueCard({
   const { overdue, dueSoon, dueSoonDays } = queue.milestones;
   const hasMilestones = overdue.length > 0 || dueSoon.length > 0;
   const nothingQueued = queue.totalItems === 0 && !hasMilestones;
+  const sortProps = { sort, params, param: "queueSort", pathname: "/integrations" };
 
   return (
     <Card
@@ -77,15 +88,9 @@ export function WorkQueueCard({
                 <TableShell caption={bucket.label}>
                   <thead>
                     <tr>
-                      <th scope="col" className={thClass}>
-                        Sujet
-                      </th>
-                      <th scope="col" className={thClass}>
-                        Assigné à
-                      </th>
-                      <th scope="col" className={thClass}>
-                        Ouverte depuis
-                      </th>
+                      <SortableHeader label="Sujet" column="subject" {...sortProps} />
+                      <SortableHeader label="Assigné à" column="assignee" {...sortProps} />
+                      <SortableHeader label="Ouverte depuis" column="age" {...sortProps} />
                     </tr>
                   </thead>
                   <tbody>

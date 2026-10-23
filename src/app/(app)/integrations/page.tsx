@@ -11,6 +11,7 @@ import {
 import { requireUser } from "@/lib/auth/guard";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
+import { readTableSort } from "@/lib/table-sort";
 import {
   describeInstance,
   describeSyncRun,
@@ -29,19 +30,32 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
-import { buildWorkQueue } from "@/modules/integrations/work-queue";
+import { buildRepositoryHealth } from "@/modules/integrations/health";
+import {
+  ACTIVITY_SORT_KEYS,
+  buildActivityMetrics,
+  DEFAULT_ACTIVITY_SORT,
+} from "@/modules/integrations/metrics";
+import {
+  buildWorkQueue,
+  DEFAULT_QUEUE_SORT,
+  QUEUE_SORT_KEYS,
+} from "@/modules/integrations/work-queue";
 import {
   listConnections,
   listIssues,
   listMilestones,
+  listProjects,
   listProviderCache,
   listSyncRuns,
 } from "@/modules/integrations/repository";
 import { connectProviderAction, syncConnectionAction } from "./actions";
+import { ActivityMetricsCard } from "./activity-metrics-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
 import { ProviderCacheCard } from "./provider-cache-card";
+import { RepositoryHealthCard } from "./repository-health-card";
 import { WorkQueueCard } from "./work-queue-card";
 
 export const dynamic = "force-dynamic";
@@ -73,11 +87,12 @@ export default async function IntegrationsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const [connections, issues, milestones, runs, cacheEntries] = await Promise.all([
+  const [connections, issues, milestones, runs, projects, cacheEntries] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
     listSyncRuns(user.id),
+    listProjects(user.id),
     listProviderCache(user.id),
   ]);
 
@@ -153,7 +168,29 @@ export default async function IntegrationsPage({
 
   // The queue reads the same filtered set as the explorer, so a filter can never make
   // the two views disagree about what is being looked at.
-  const workQueue = buildWorkQueue(filteredIssues, milestones, { now });
+  // Column sorts live in the URL too, so a sorted view survives a reload.
+  const queueSort = readTableSort(params, "queueSort", QUEUE_SORT_KEYS, DEFAULT_QUEUE_SORT);
+  const activitySort = readTableSort(
+    params,
+    "activitySort",
+    ACTIVITY_SORT_KEYS,
+    DEFAULT_ACTIVITY_SORT,
+  );
+  const workQueue = buildWorkQueue(filteredIssues, milestones, { now, sort: queueSort });
+
+  // Activity metrics describe everything stored, not the explorer's selection: a
+  // median over "unanswered issues only" would be a different, undocumented metric.
+  const activityMetrics = buildActivityMetrics(issues, milestones, projects, {
+    now,
+    issueTracking: issueConnections.length > 0,
+  });
+  const lastSync = connections.reduce<Date | null>(
+    (latest, connection) =>
+      connection.lastSyncedAt && (!latest || connection.lastSyncedAt > latest)
+        ? connection.lastSyncedAt
+        : latest,
+    null,
+  );
 
   return (
     <>
@@ -192,6 +229,24 @@ export default async function IntegrationsPage({
           queue={workQueue}
           issueTrackingConnected
           lastSyncedAt={lastIssueSync}
+          sort={queueSort}
+          params={params}
+        />
+      ) : null}
+
+      {lastSync ? (
+        <ActivityMetricsCard
+          metrics={activityMetrics}
+          lastSyncedAt={lastSync}
+          sort={activitySort}
+          params={params}
+        />
+      ) : null}
+
+      {lastSync ? (
+        <RepositoryHealthCard
+          reports={buildRepositoryHealth(projects, milestones, { now })}
+          lastSyncedAt={lastSync}
         />
       ) : null}
 

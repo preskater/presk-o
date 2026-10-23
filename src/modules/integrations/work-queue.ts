@@ -1,3 +1,4 @@
+import { directionFactor, type TableSort } from "@/lib/table-sort";
 import type { IssueKind } from "./domain";
 import {
   ageInDays,
@@ -33,6 +34,13 @@ export const QUEUE_REASONS = [
   "blocked",
 ] as const;
 export type QueueReason = (typeof QUEUE_REASONS)[number];
+
+/** Columns a queue bucket can be sorted by. */
+export const QUEUE_SORT_KEYS = ["subject", "assignee", "age"] as const;
+export type QueueSortKey = (typeof QUEUE_SORT_KEYS)[number];
+
+/** Default: "Ouverte depuis", smallest lapse first — what just arrived comes first. */
+export const DEFAULT_QUEUE_SORT: TableSort<QueueSortKey> = { key: "age", direction: "asc" };
 
 /** How long an open pull request can sit before it joins the queue. */
 export const DEFAULT_OLD_PULL_REQUEST_DAYS = 14;
@@ -209,8 +217,8 @@ const BUCKET_META: Record<QueueReason, { label: string; rationale: string }> = {
  *
  * One issue can land in several buckets (`reasons`): a blocked, unlabelled, old pull
  * request is three reasons to look at it, and each bucket lists it where the action
- * belongs. Inside a bucket, items are ordered oldest first — the backlog order, which
- * is the order that matters for a queue. Milestones are split into overdue and
+ * belongs. Inside a bucket, items follow `sort` — by default the most recently opened
+ * first (`DEFAULT_QUEUE_SORT`). Milestones are split into overdue and
  * due-soon, and a closed or undated milestone never appears (a finished milestone is
  * not late).
  */
@@ -226,6 +234,7 @@ export function buildWorkQueue<
     oldPullRequestDays?: number;
     milestoneDueSoonDays?: number;
     blockedLabels?: readonly string[];
+    sort?: TableSort<QueueSortKey>;
   } = {},
 ): WorkQueue<TIssue, TMilestone> {
   const now = options.now ?? new Date();
@@ -269,9 +278,7 @@ export function buildWorkQueue<
     reason,
     label: BUCKET_META[reason].label,
     rationale: BUCKET_META[reason].rationale,
-    items: itemsByReason
-      .get(reason)!
-      .sort((left, right) => left.issue.openedAt.getTime() - right.issue.openedAt.getTime()),
+    items: sortQueueItems(itemsByReason.get(reason)!, options.sort ?? DEFAULT_QUEUE_SORT),
   }));
 
   const overdue: TMilestone[] = [];
@@ -301,6 +308,37 @@ export function buildWorkQueue<
       milestoneDueSoonDays,
     },
   };
+}
+
+/**
+ * Orders the items of one bucket. Ties fall back to the repository and number, so the
+ * order is stable from one render to the next. An unassigned item sorts as an empty
+ * name: first ascending, last descending.
+ */
+export function sortQueueItems<TIssue extends QueueIssue>(
+  items: readonly WorkQueueItem<TIssue>[],
+  sort: TableSort<QueueSortKey>,
+): WorkQueueItem<TIssue>[] {
+  const factor = directionFactor(sort.direction);
+
+  const compare = (left: WorkQueueItem<TIssue>, right: WorkQueueItem<TIssue>): number => {
+    switch (sort.key) {
+      case "subject":
+        return left.issue.title.localeCompare(right.issue.title, "fr");
+      case "assignee":
+        return (left.issue.assignees[0] ?? "").localeCompare(right.issue.assignees[0] ?? "", "fr");
+      case "age":
+        // Smaller lapse = opened more recently.
+        return right.issue.openedAt.getTime() - left.issue.openedAt.getTime();
+    }
+  };
+
+  return [...items].sort(
+    (left, right) =>
+      factor * compare(left, right) ||
+      left.issue.repository.localeCompare(right.issue.repository) ||
+      left.issue.number - right.issue.number,
+  );
 }
 
 function dueTime(milestone: QueueMilestone): number {

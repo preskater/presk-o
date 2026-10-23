@@ -48,6 +48,8 @@ const FICTITIOUS_REPO = {
   stargazers_count: 3,
   open_issues_count: 1,
   pushed_at: "2026-09-29T10:00:00Z",
+  description: "Projet de démonstration",
+  topics: ["budget", "demo"],
 };
 
 describe("createGitHubAdapter — nominal case", () => {
@@ -73,9 +75,37 @@ describe("createGitHubAdapter — nominal case", () => {
         stars: 3,
         openIssues: 1,
         lastPushAt: "2026-09-29T10:00:00Z",
+        hasDescription: true,
+        topicCount: 2,
       },
     });
     expect(outcome.fetchedAt).toBeInstanceOf(Date);
+  });
+
+  it("keeps only the presence of a description, never its text", () => {
+    const metrics = normaliseGitHubRepository(FICTITIOUS_REPO).metrics;
+
+    expect(JSON.stringify(metrics)).not.toContain("Projet de démonstration");
+  });
+
+  it("reads a null or blank description as missing, and no topics as zero", () => {
+    expect(
+      normaliseGitHubRepository({ ...FICTITIOUS_REPO, description: null, topics: [] }).metrics,
+    ).toMatchObject({ hasDescription: false, topicCount: 0 });
+    expect(
+      normaliseGitHubRepository({ ...FICTITIOUS_REPO, description: "   " }).metrics,
+    ).toMatchObject({ hasDescription: false });
+  });
+
+  it("reads absent fields as unknown rather than missing", () => {
+    const partial: Record<string, unknown> = { ...FICTITIOUS_REPO };
+    delete partial.description;
+    delete partial.topics;
+
+    expect(normaliseGitHubRepository(partial).metrics).toMatchObject({
+      hasDescription: null,
+      topicCount: null,
+    });
   });
 
   it("sends the token in a header and never in the URL", async () => {
