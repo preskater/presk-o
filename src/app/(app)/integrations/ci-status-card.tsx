@@ -17,7 +17,9 @@ const OUTCOME_BADGES: Record<CiOutcome, { tone: "negative" | "warning" | "neutra
 };
 
 /**
- * CI status (DA-03): the latest GitHub Actions run of each workflow, failures first.
+ * CI status (DA-03): the latest GitHub Actions run of each workflow, most recently
+ * started first. Failures are counted in a notice above the table, so an old failure
+ * stays visible even when newer runs sort above it.
  *
  * Read-only: every row links to the provider, where re-running happens — this card
  * offers no such action. A repository whose CI could not be read is listed as
@@ -40,7 +42,7 @@ export function CiStatusCard({
       title="Intégration continue"
       collapsible
       description={
-        `Dernière exécution de chaque workflow GitHub Actions, les échecs en premier.` +
+        `Dernière exécution de chaque workflow GitHub Actions, de la plus récente à la plus ancienne.` +
         (lastSyncedAt ? ` Dernière lecture : ${formatInstant(lastSyncedAt)}.` : "")
       }
     >

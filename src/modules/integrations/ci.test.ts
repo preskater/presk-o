@@ -131,7 +131,7 @@ describe("buildCiOverview", () => {
     ]);
   });
 
-  it("puts failures first, then running, other and success, newest first within each", () => {
+  it("lists the latest runs most recently started first, whatever their outcome", () => {
     const overview = buildCiOverview([
       repository({
         repository: "acme/a",
@@ -151,11 +151,28 @@ describe("buildCiOverview", () => {
     ]);
 
     expect(overview.latest.map((entry) => entry.run.workflowName)).toEqual([
+      "Lint",
+      "Docs",
       "Test",
       "Build",
       "Release",
-      "Docs",
-      "Lint",
     ]);
+  });
+
+  it("breaks a start-time tie by repository, then workflow", () => {
+    const overview = buildCiOverview([
+      repository({ repository: "acme/b", runs: [run({ workflowName: "CI", startedAt: at(0) })] }),
+      repository({
+        repository: "acme/a",
+        runs: [
+          run({ workflowName: "Lint", startedAt: at(0) }),
+          run({ workflowName: "Build", startedAt: at(0) }),
+        ],
+      }),
+    ]);
+
+    expect(
+      overview.latest.map((entry) => `${entry.repository.repository} ${entry.run.workflowName}`),
+    ).toEqual(["acme/a Build", "acme/a Lint", "acme/b CI"]);
   });
 });
