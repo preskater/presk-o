@@ -235,10 +235,9 @@ describe("requireUser", () => {
 
 describe("requireModule", () => {
   beforeEach(() => {
-    authMock.mockReset().mockResolvedValue({
-      user: { id: owner.id, email: owner.email },
-      passwordTag: CURRENT_TAG,
-    });
+    authMock.mockReset().mockResolvedValue(validSession);
+    findActiveSessionMock.mockReset().mockResolvedValue(sessionRecord);
+    touchSessionMock.mockReset().mockResolvedValue(undefined);
     findOwnerByIdMock.mockReset().mockResolvedValue(owner);
     listMembershipsMock.mockReset().mockResolvedValue([personal]);
   });
