@@ -751,6 +751,31 @@ Cache validators are not secrets — they are opaque tags of public-to-the-token
 responses — but they are still read and written server-side only, scoped through the
 owner's connection.
 
+## System diagnostics (SO-03)
+
+`/diagnostics` (linked from the **Compte** page) answers the operational questions
+inside the product, read-only. It calls `requireUser()` first, renders server-side and
+is `force-dynamic`; there is no unauthenticated health endpoint.
+
+`src/modules/diagnostics/run.ts` runs the probes, `checks.ts` turns each observation
+into `ok | warning | error`, a fixed French message and the action to take. A probe
+that fails returns null instead of throwing, so one broken part never hides the others
+and no raw error (which could quote a connection string) reaches the page.
+
+| Check | Source | Never shown |
+| --- | --- | --- |
+| Database | `SELECT 1`, 3 s timeout | the connection string |
+| Migrations | failed rows of `_prisma_migrations`; pending = names in `prisma/migrations` (copied into the image) not applied | — |
+| Encryption key | presence and `decodeEncryptionKey` validity | the key, even partially |
+| Session secret | presence and the `getServerEnv()` length rule | the secret |
+| Providers | status, last synchronisation, stored safe error code, instance host | tokens, URL paths |
+| Last backup | timestamp in the newest `dashboard-*.dump` **file name** under `BACKUP_DIR` (compose mounts `infra/backups` read-only) | dump contents |
+| Version | `package.json`, plus `APP_VERSION` when set (characters `[A-Za-z0-9_.-]` only) | — |
+
+What it cannot see, it says (a warning), rather than reporting a reassuring "ok": a
+migration folder or a backup folder that is not visible from the running app. Backup
+age is not restorability: that verification is SO-04.
+
 ## Not implemented in this base
 
 - No bank connector, no payment, no accounting or tax advice. The CSV import is
