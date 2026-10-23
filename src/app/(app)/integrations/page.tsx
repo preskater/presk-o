@@ -85,8 +85,7 @@ export default async function IntegrationsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const [connections, issues, milestones, runs, projects] = await Promise.all([
-  const [connections, issues, milestones, runs, cacheEntries] = await Promise.all([
+  const [connections, issues, milestones, runs, projects, cacheEntries] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
