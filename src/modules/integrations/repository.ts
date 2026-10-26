@@ -430,18 +430,28 @@ export async function listIssues(userId: string): Promise<IssueSummary[]> {
   }));
 }
 
-/** Stored projects with the provider metrics the activity indicators read (DA-02). */
-export async function listProjects(
-  userId: string,
-): Promise<{ name: string; metrics: Record<string, unknown> | null }[]> {
+export type ProjectSummary = {
+  connectionId: string;
+  name: string;
+  provider: IntegrationProvider;
+  /** Link to the repository at the provider. */
+  url: string;
+  metrics: Record<string, unknown> | null;
+};
+
+/** Stored projects with the provider metrics the activity and health indicators read. */
+export async function listProjects(userId: string): Promise<ProjectSummary[]> {
   const rows = await getPrisma().projectSnapshot.findMany({
     where: { connection: { userId } },
     orderBy: { name: "asc" },
-    select: { name: true, metrics: true },
+    select: { name: true, provider: true, externalUrl: true, metrics: true, connectionId: true },
   });
 
   return rows.map((row) => ({
+    connectionId: row.connectionId,
     name: row.name,
+    provider: row.provider as IntegrationProvider,
+    url: row.externalUrl,
     metrics:
       typeof row.metrics === "object" && row.metrics !== null && !Array.isArray(row.metrics)
         ? (row.metrics as Record<string, unknown>)

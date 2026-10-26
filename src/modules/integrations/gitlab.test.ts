@@ -44,6 +44,8 @@ const FICTITIOUS_PROJECT = {
   forks_count: 1,
   open_issues_count: 4,
   last_activity_at: "2026-09-28T12:00:00Z",
+  description: "",
+  topics: ["infra"],
 };
 
 describe("resolveInstanceBase", () => {
@@ -93,8 +95,32 @@ describe("createGitLabAdapter — nominal case", () => {
         forks: 1,
         openIssues: 4,
         lastActivityAt: "2026-09-28T12:00:00Z",
+        hasDescription: false,
+        topicCount: 1,
       },
     });
+  });
+
+  it("falls back to tag_list on instances older than topics, and to unknown without either", async () => {
+    const withoutTopics: Record<string, unknown> = { ...FICTITIOUS_PROJECT };
+    delete withoutTopics.topics;
+    const { impl } = queueFetch([
+      () =>
+        jsonResponse([
+          { ...withoutTopics, tag_list: ["legacy", "infra"] },
+          { ...withoutTopics, id: 43, path_with_namespace: "example-group/other", description: undefined },
+        ]),
+    ]);
+
+    const outcome = await createGitLabAdapter().listProjects({
+      token: "fictitious-token",
+      instanceUrl: "https://gitlab.example.com",
+      owner: null,
+      fetchImpl: impl,
+    });
+
+    expect(outcome.projects[0].metrics).toMatchObject({ topicCount: 2 });
+    expect(outcome.projects[1].metrics).toMatchObject({ topicCount: null, hasDescription: null });
   });
 
   it("sends the token in the PRIVATE-TOKEN header, never in the URL", async () => {

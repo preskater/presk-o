@@ -519,6 +519,43 @@ asked for: a cascade here would silently change what a property is worth.
     `mergedAt` and no closed history to compute either honestly. Providing them needs
     an additive, bounded fetch of recently closed items (new fields or a table, a
     migration and more provider quota) — a separate ticket, not part of DA-02.
+- Repository health (integrations page, « Santé des dépôts », DA-05) —
+  `buildRepositoryHealth`, pure functions over the stored projects and milestones and a
+  reference instant. Each indicator states its rule on screen and lists the repositories
+  it flags, linked to the provider; there is no global score and nothing implies a
+  write. A repository is **flagged**, **fine** or **not evaluated** (with the reason) for
+  each indicator, and "not evaluated" is never counted as fine:
+  - *Dépôts inactifs* — the activity metrics rule, reused rather than restated
+    (`projectLastActivity`, `DEFAULT_INACTIVE_DAYS` = 30), listed from the shortest to
+    the longest inactivity, so the repositories that just went quiet lead. Every other
+    indicator lists its repositories by name.
+  - *Backlog d'issues* — the provider's open issue counter is at least
+    `DEFAULT_BACKLOG_THRESHOLD` (25). The provider counter is used rather than stored
+    rows because issues are only stored for the bounded selection, and only on GitHub.
+    GitHub's counter includes pull requests, and the text says so. GitLab lists
+    projects with `simple=true`, which carries no counter, so the indicator is not
+    evaluated there. DA-02 defines no issue backlog figure (only pull request counts),
+    so there was none to reuse.
+  - *Jalons en retard* — at least one open milestone past its due date, read exactly as
+    `describeMilestoneDue` reads it (a closed or undated milestone is never late). Only
+    evaluated where milestones are read: GitHub, and repositories inside the bounded
+    selection, computed with the adapter's own `selectRepositoriesToScan` per connection.
+  - *Sans description* / *Sans topics* — the repository has no description, or no topic.
+  - *Métadonnées manquantes* — no default branch, which usually means an empty
+    repository.
+
+  Repositories an indicator cannot judge are grouped by reason (`groupUnavailable`):
+  each reason is stated once, followed by the repositories it concerns, rather than
+  repeated after every one of them.
+
+  **Storage decision:** description and topics were not stored. They are already in
+  the project listing both providers return, so they are kept in the existing
+  `ProjectSnapshot.metrics` JSON as `hasDescription` (boolean) and `topicCount`
+  (number) — no migration, no extra request, and only the *presence* of a description,
+  never its text. A key the payload did not carry is stored as `null`; a snapshot taken
+  before this change has no key at all; both render "not evaluated", and the next
+  synchronisation fills them. GitLab falls back to `tag_list` on instances older than
+  `topics`.
 - Budget charts — two, each answering a question the monthly table cannot. Both reuse
   the aggregation rules above instead of defining their own, so a number in a chart
   always equals the same number in a table:
