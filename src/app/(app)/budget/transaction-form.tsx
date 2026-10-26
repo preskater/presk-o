@@ -255,6 +255,9 @@ export function TransactionForm({
           list="transaction-label-suggestions"
           className={inputClass}
           autoComplete="off"
+          // The `n` shortcut lands here, on creation forms only: a correction is never "new".
+          data-shortcut={isEditing ? undefined : "new-transaction"}
+          aria-keyshortcuts={isEditing ? undefined : "n"}
           {...form.register("label")}
         />
         {labelSuggestions.length > 0 ? (

@@ -67,6 +67,24 @@ flowchart LR
 - After a write, the action revalidates the affected paths (`/budget`,
   `/real-estate`, `/dashboard`); nothing is cached across owners.
 
+### Quick actions (UX-02)
+
+Convenience paths reuse the write path above; none of them is a second one.
+
+- **Quick entry**: the dashboard's « Nouvelle opération » card renders the budget
+  page's own `TransactionForm` — same `transactionFormSchema`, same
+  `createTransactionAction`, same `keepValues` behaviour and feedback.
+  `quick-transaction-card.test.ts` checks the schema it resolves with.
+- **Filter shortcuts**: links above the budget filters, built by
+  `buildFilterShortcuts` on the query parameters the filter form already submits. A
+  preset (« Non pointées », « Dépenses », « Recettes ») replaces the filters and keeps
+  the month; a period (« Mois en cours », « Mois précédent », « Tous les mois ») keeps
+  the filters and changes the window.
+- **Keyboard**: `n` focuses the label of the page's creation form, `/` the « Libellé
+  contient » search. Targets carry `data-shortcut`; keys typed in a field or with
+  Ctrl, Cmd or Alt are ignored, and a page without the target ignores the key. The
+  shortcuts only move the focus, they never submit.
+
 ### Deletion
 
 A transaction can be removed from the budget table, after a confirmation step that
@@ -610,6 +628,37 @@ beside its fields.
 - Exports are `no-store` and CSV values that could be read as a spreadsheet
   formula are neutralised.- Personal data is never placed in fixtures, screenshots or logs. Error messages
   persisted for display contain a code, never a token or a payload.
+
+## Responsive, dark mode and installability (UX-03)
+
+- **No service worker, no offline cache.** The app is installable through
+  `src/app/manifest.ts` and the icons in `public/icons/` only. Pages, RSC payloads and
+  API responses hold personal financial data and are never stored for offline use;
+  the `no-store` exports are unaffected. Adding a service worker later needs its own
+  decision and a whitelist of static assets only (`/_next/static`, `/icons`), never
+  HTML, RSC or `/api`.
+- The proxy matcher leaves `manifest.webmanifest` and `/icons/` public, like the
+  favicon: the browser fetches them without the session cookie, and they contain no
+  personal data. Every other path still requires a session.
+- The theme follows `prefers-color-scheme`; `color-scheme: light dark` makes native
+  controls (date pickers, selects, scrollbars) follow it too, and `theme-color` matches
+  the page background of each theme.
+- `prefers-reduced-motion: reduce` disables every transition and animation
+  (`globals.css`).
+- Contrast: `src/components/contrast.test.ts` computes the WCAG ratio of the text and
+  background pairs of the interface, in both themes, from Tailwind's own colour tokens,
+  and requires 4.5:1.
+- Wide tables keep a minimum width and scroll horizontally inside their card
+  (`overflow-x-auto`), so the desktop spreadsheet layout is not squeezed on a phone.
+
+Manual checks (fictitious data only):
+
+| Check | Status |
+| --- | --- |
+| Manifest, icons and `theme-color` served signed out; private pages still redirect | Done (curl, 2026-10-22) |
+| Dashboard, budget (Opérations, editable table), real estate, alerts at 375 px wide, both themes | To do |
+| Installation from Chrome / Edge, then « Ajouter à l'écran d'accueil » on iOS | To do |
+| Reduced motion enabled in the OS: folding chevrons no longer animate | To do |
 
 ## CSV import of bank statements
 

@@ -8,12 +8,15 @@ import {
 	StatCard,
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
-import { formatInstant } from "@/lib/dates";
+import { formatInstant, toDateOnlyString } from "@/lib/dates";
 import { publicEnv } from "@/lib/env";
 import { formatMoney } from "@/lib/money";
 import { refreshAlerts } from "@/modules/alerts/refresh";
 import { describeBudgetVariance } from "@/modules/budget/report";
+import { listAccounts, listCategories, listLabelHistory } from "@/modules/budget/repository";
+import { buildLabelSuggestions } from "@/modules/budget/suggestions";
 import { getDashboardOverview } from "@/modules/dashboard/queries";
+import { QuickTransactionCard } from "../budget/quick-transaction-card";
 
 // Personal financial data must never be served from a static cache.
 export const dynamic = "force-dynamic";
@@ -26,7 +29,13 @@ export default async function DashboardPage() {
 	// same pass, so both screens tell the same story.
 	await refreshAlerts(user.id);
 
-	const overview = await getDashboardOverview(user.id);
+	// The quick entry reads the same lists as the budget page's form, from the owner's data.
+	const [overview, accounts, categories, labelHistory] = await Promise.all([
+		getDashboardOverview(user.id),
+		listAccounts(user.id),
+		listCategories(user.id),
+		listLabelHistory(user.id),
+	]);
 
 	const { alerts, budget, budgetTracking, realEstate, integrations, monthKey, monthLabel } =
 		overview;
@@ -89,6 +98,13 @@ export default async function DashboardPage() {
 					) : null}
 				</section>
 			) : null}
+
+			<QuickTransactionCard
+				accounts={accounts}
+				categories={categories}
+				labelSuggestions={buildLabelSuggestions(labelHistory)}
+				today={toDateOnlyString(new Date())}
+			/>
 
 			<section aria-labelledby="budget-month" className="flex flex-col gap-3">
 				<h2

@@ -47,3 +47,6 @@ next-env.d.ts
 
 *override*.yaml
 *override*.yml
+
+# graphify knowledge graph output
+graphify-out/
