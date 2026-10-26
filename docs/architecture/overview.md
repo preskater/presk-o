@@ -67,6 +67,24 @@ flowchart LR
 - After a write, the action revalidates the affected paths (`/budget`,
   `/real-estate`, `/dashboard`); nothing is cached across owners.
 
+### Quick actions (UX-02)
+
+Convenience paths reuse the write path above; none of them is a second one.
+
+- **Quick entry**: the dashboard's « Nouvelle opération » card renders the budget
+  page's own `TransactionForm` — same `transactionFormSchema`, same
+  `createTransactionAction`, same `keepValues` behaviour and feedback.
+  `quick-transaction-card.test.ts` checks the schema it resolves with.
+- **Filter shortcuts**: links above the budget filters, built by
+  `buildFilterShortcuts` on the query parameters the filter form already submits. A
+  preset (« Non pointées », « Dépenses », « Recettes ») replaces the filters and keeps
+  the month; a period (« Mois en cours », « Mois précédent », « Tous les mois ») keeps
+  the filters and changes the window.
+- **Keyboard**: `n` focuses the label of the page's creation form, `/` the « Libellé
+  contient » search. Targets carry `data-shortcut`; keys typed in a field or with
+  Ctrl, Cmd or Alt are ignored, and a page without the target ignores the key. The
+  shortcuts only move the focus, they never submit.
+
 ### Deletion
 
 A transaction can be removed from the budget table, after a confirmation step that
