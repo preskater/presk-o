@@ -593,6 +593,37 @@ beside its fields.
   formula are neutralised.- Personal data is never placed in fixtures, screenshots or logs. Error messages
   persisted for display contain a code, never a token or a payload.
 
+## Responsive, dark mode and installability (UX-03)
+
+- **No service worker, no offline cache.** The app is installable through
+  `src/app/manifest.ts` and the icons in `public/icons/` only. Pages, RSC payloads and
+  API responses hold personal financial data and are never stored for offline use;
+  the `no-store` exports are unaffected. Adding a service worker later needs its own
+  decision and a whitelist of static assets only (`/_next/static`, `/icons`), never
+  HTML, RSC or `/api`.
+- The proxy matcher leaves `manifest.webmanifest` and `/icons/` public, like the
+  favicon: the browser fetches them without the session cookie, and they contain no
+  personal data. Every other path still requires a session.
+- The theme follows `prefers-color-scheme`; `color-scheme: light dark` makes native
+  controls (date pickers, selects, scrollbars) follow it too, and `theme-color` matches
+  the page background of each theme.
+- `prefers-reduced-motion: reduce` disables every transition and animation
+  (`globals.css`).
+- Contrast: `src/components/contrast.test.ts` computes the WCAG ratio of the text and
+  background pairs of the interface, in both themes, from Tailwind's own colour tokens,
+  and requires 4.5:1.
+- Wide tables keep a minimum width and scroll horizontally inside their card
+  (`overflow-x-auto`), so the desktop spreadsheet layout is not squeezed on a phone.
+
+Manual checks (fictitious data only):
+
+| Check | Status |
+| --- | --- |
+| Manifest, icons and `theme-color` served signed out; private pages still redirect | Done (curl, 2026-10-22) |
+| Dashboard, budget (Opérations, editable table), real estate, alerts at 375 px wide, both themes | To do |
+| Installation from Chrome / Edge, then « Ajouter à l'écran d'accueil » on iOS | To do |
+| Reduced motion enabled in the OS: folding chevrons no longer animate | To do |
+
 ## CSV import of bank statements
 
 The « Importer un CSV » page (`/budget/import`) is the deliberate manual alternative to a
