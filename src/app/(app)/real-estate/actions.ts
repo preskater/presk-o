@@ -8,7 +8,8 @@ import {
   unexpectedResult,
   type ActionResult,
 } from "@/lib/actions";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { recordIdInput } from "@/lib/validation";
 import { DEFAULT_CURRENCY, formatMoney } from "@/lib/money";
 import {
@@ -42,7 +43,7 @@ import { findTransactionRef } from "@/modules/budget/repository";
  */
 
 export async function createPropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertyInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -84,7 +85,7 @@ export async function createPropertyAction(values: unknown): Promise<ActionResul
  * The update therefore never clears an existing sale.
  */
 export async function updatePropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertyUpdateSchema.safeParse(values);
   if (!parsed.success) {
@@ -127,7 +128,7 @@ export async function updatePropertyAction(values: unknown): Promise<ActionResul
  * keeps the record; this action is for a property that should never have been tracked.
  */
 export async function deletePropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = recordIdInput.safeParse(values);
   if (!parsed.success) {
@@ -158,7 +159,7 @@ export async function deletePropertyAction(values: unknown): Promise<ActionResul
  * It stays "unknown" (with its reason) when a figure it needs was never entered.
  */
 export async function sellPropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertySaleInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -246,7 +247,7 @@ function revalidateProperty(propertyId: string): void {
 }
 
 export async function createCashflowAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = cashflowInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -265,6 +266,11 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
   let currency = input.currency ?? DEFAULT_CURRENCY;
 
   if (input.transactionId) {
+    // Linking reads the ledger: refused when the budget module is not active here.
+    if (!hasModule(user.workspace, "budget")) {
+      return rejectedResult("transactionId", "Transaction introuvable.");
+    }
+
     const transaction = await findTransactionRef(user.id, input.transactionId);
     if (!transaction) {
       return rejectedResult("transactionId", "Transaction introuvable.");
@@ -312,7 +318,7 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
  */
 
 export async function createLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = loanInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -338,7 +344,7 @@ export async function createLoanAction(values: unknown): Promise<ActionResult> {
 }
 
 export async function updateLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = loanUpdateSchema.safeParse(values);
   if (!parsed.success) {
@@ -372,7 +378,7 @@ export async function updateLoanAction(values: unknown): Promise<ActionResult> {
 }
 
 export async function deleteLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = recordIdInput.safeParse(values);
   if (!parsed.success) {

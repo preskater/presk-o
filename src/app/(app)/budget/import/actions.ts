@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { invalidResult, unexpectedResult } from "@/lib/actions";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { toDateOnlyString } from "@/lib/dates";
 import {
   IMPORT_SCAN_LIMIT,
@@ -37,7 +37,7 @@ function duplicateKey(date: Date, label: string, amount: string): string {
 export async function importTransactionsAction(
   values: unknown,
 ): Promise<ImportActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("budget");
 
   const parsed = importSubmissionSchema.safeParse(values);
   if (!parsed.success) {

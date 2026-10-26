@@ -5,6 +5,7 @@ import {
 } from "./cache";
 import type {
   IntegrationProvider,
+  ProviderCiRun,
   ProviderIssue,
   ProviderMilestone,
   ProviderProject,
@@ -80,6 +81,7 @@ export interface IntegrationAdapter {
   listProjects(request: SyncRequest): Promise<SyncOutcome>;
   listIssues(request: IssueSyncRequest): Promise<IssueSyncOutcome>;
   listMilestones(request: IssueSyncRequest): Promise<MilestoneSyncOutcome>;
+  listCiRuns(request: IssueSyncRequest): Promise<CiSyncOutcome>;
 }
 
 /**
@@ -139,6 +141,23 @@ export type MilestoneSyncOutcome = RepositoryScanSummary & {
   supported: boolean;
   milestones: ProviderMilestone[];
   checks: ResourceCheck[];
+  fetchedAt: Date;
+};
+
+/**
+ * CI runs of one repository (DA-03). A refusal is kept per repository, with its safe
+ * code: CI permissions are often narrower than issue permissions, so a refused read
+ * means "unavailable here", not a failed synchronisation.
+ */
+export type CiRepositoryResult =
+  | { repository: string; read: true; runs: ProviderCiRun[] }
+  | { repository: string; read: false; errorCode: string };
+
+export type CiSyncOutcome = RepositoryScanSummary & {
+  /** False for a provider whose CI is not fetched; the list is then empty. */
+  supported: boolean;
+  /** One entry per repository requested, in the order of the bounded selection. */
+  repositories: CiRepositoryResult[];
   fetchedAt: Date;
 };
 

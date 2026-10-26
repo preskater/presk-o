@@ -17,5 +17,7 @@ export const config = {
   // Next.js assets are skipped, and so is every API route: a Route Handler must
   // answer 401 with a JSON body, not redirect a client to an HTML login page.
   // The session is checked again inside each handler.
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\.svg$).*)"],
+  // The manifest and its icons are fetched by the browser without the session cookie:
+  // they must stay reachable signed out, like the favicon. They hold no personal data.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|.*\\.svg$).*)"],
 };

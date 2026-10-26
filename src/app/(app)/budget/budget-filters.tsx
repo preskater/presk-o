@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/ui";
+import { currentMonthKey } from "@/lib/dates";
 import {
   TRANSACTION_TYPES,
   type AccountSummary,
@@ -7,6 +8,7 @@ import {
   type TransactionType,
 } from "@/modules/budget/domain";
 import type { BudgetTab } from "./budget-tabs";
+import { buildFilterShortcuts } from "./filter-shortcuts";
 
 const TYPE_LABELS: Record<TransactionType, string> = {
   INCOME: "Recette",
@@ -53,8 +55,44 @@ export function BudgetFilters({
   showAllScope?: boolean;
   allScope?: boolean;
 }) {
+  const shortcuts = buildFilterShortcuts({
+    tab,
+    monthKey,
+    currentMonthKey: currentMonthKey(),
+    values,
+    allScope,
+    showAllScope,
+  });
+
   return (
     <Card title="Filtres">
+      <nav aria-label="Filtres rapides" className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        {shortcuts.map((shortcut) => (
+          <Link
+            key={shortcut.label}
+            href={shortcut.href}
+            aria-current={shortcut.active ? "true" : undefined}
+            className={
+              shortcut.active
+                ? "rounded-full bg-zinc-900 px-3 py-1 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                : "rounded-full border border-zinc-300 px-3 py-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            }
+          >
+            {shortcut.label}
+          </Link>
+        ))}
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          Clavier : <kbd>/</kbd> recherche
+          {/* Only the operations tab carries the creation form `n` focuses. */}
+          {tab === "operations" ? (
+            <>
+              , <kbd>n</kbd> nouvelle opération
+            </>
+          ) : null}
+          .
+        </span>
+      </nav>
+
       <form method="get" action="/budget" className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="tab" value={tab} />
 
@@ -134,6 +172,8 @@ export function BudgetFilters({
           <input
             type="search"
             name="q"
+            data-shortcut="search"
+            aria-keyshortcuts="/"
             defaultValue={values.search ?? ""}
             className={`${fieldClass} w-full`}
           />

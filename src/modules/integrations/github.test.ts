@@ -731,3 +731,222 @@ describe("createGitHubAdapter — conditional requests", () => {
     ]);
   });
 });
+
+/** Fictitious workflow run: no real repository, workflow or branch. */
+const FICTITIOUS_RUN = {
+  id: 700001,
+  name: "CI",
+  head_branch: "main",
+  status: "completed",
+  conclusion: "failure",
+  html_url: "https://github.com/example-owner/example-project/actions/runs/700001",
+  run_started_at: "2026-09-30T10:00:00Z",
+  created_at: "2026-09-30T09:59:00Z",
+  updated_at: "2026-09-30T10:04:05Z",
+};
+
+describe("createGitHubAdapter — CI runs", () => {
+  it("normalises one page of workflow runs and keeps only the displayed fields", async () => {
+    const { impl, calls } = queueFetch([
+      () =>
+        jsonResponse({
+          total_count: 2,
+          workflow_runs: [
+            { ...FICTITIOUS_RUN, head_commit: { message: "jamais stocké" } },
+            { ...FICTITIOUS_RUN, id: 700002, status: "in_progress", conclusion: null },
+          ],
+        }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(calls[0].url).toBe(
+      "https://api.github.com/repos/example-owner/example-project/actions/runs?per_page=20",
+    );
+    expect(outcome.repositories).toEqual([
+      {
+        repository: "example-owner/example-project",
+        read: true,
+        runs: [
+          {
+            externalId: "700001",
+            repository: "example-owner/example-project",
+            workflowName: "CI",
+            branch: "main",
+            status: "completed",
+            conclusion: "failure",
+            url: FICTITIOUS_RUN.html_url,
+            startedAt: new Date("2026-09-30T10:00:00Z"),
+            updatedAt: new Date("2026-09-30T10:04:05Z"),
+          },
+          expect.objectContaining({ externalId: "700002", status: "in_progress", conclusion: null }),
+        ],
+      },
+    ]);
+    expect(outcome).toMatchObject({ repositoriesScanned: 1, repositoriesFailed: 0 });
+  });
+
+  it("reads an empty run list as read with no run, not as unavailable", async () => {
+    const { impl } = queueFetch([() => jsonResponse({ total_count: 0, workflow_runs: [] })]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(outcome.repositories).toEqual([
+      { repository: "example-owner/example-project", read: true, runs: [] },
+    ]);
+  });
+
+  it("falls back to created_at when run_started_at is absent", async () => {
+    const { impl } = queueFetch([
+      () => jsonResponse({ workflow_runs: [{ ...FICTITIOUS_RUN, run_started_at: undefined }] }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(outcome.repositories[0]).toMatchObject({
+      read: true,
+      runs: [{ startedAt: new Date("2026-09-30T09:59:00Z") }],
+    });
+  });
+
+  it("reports a 403 and a 404 as unavailable per repository and keeps reading the others", async () => {
+    const { impl, calls } = queueFetch([
+      () => jsonResponse({ message: "Resource not accessible by personal access token" }, { status: 403 }),
+      () => jsonResponse({ message: "Not Found" }, { status: 404 }),
+      () => jsonResponse({ workflow_runs: [FICTITIOUS_RUN] }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest(
+        [
+          project("example-owner/forbidden", "2026-09-30T12:00:00Z"),
+          project("example-owner/gone", "2026-09-30T11:00:00Z"),
+          project("example-owner/readable", "2026-09-30T10:00:00Z"),
+        ],
+        impl,
+      ),
+    );
+
+    expect(calls).toHaveLength(3);
+    expect(outcome.repositories).toEqual([
+      { repository: "example-owner/forbidden", read: false, errorCode: "UNAUTHORIZED (HTTP 403)" },
+      { repository: "example-owner/gone", read: false, errorCode: "NOT_FOUND (HTTP 404)" },
+      expect.objectContaining({ repository: "example-owner/readable", read: true }),
+    ]);
+    expect(outcome).toMatchObject({ repositoriesScanned: 1, repositoriesFailed: 2 });
+  });
+
+  it("does not fail the run when every repository refuses: CI is unavailable, not the sync", async () => {
+    const { impl } = queueFetch([() => jsonResponse({}, { status: 403 })]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/forbidden", "2026-09-30T12:00:00Z")], impl),
+    );
+
+    expect(outcome.repositories).toEqual([
+      { repository: "example-owner/forbidden", read: false, errorCode: "UNAUTHORIZED (HTTP 403)" },
+    ]);
+  });
+
+  it("stops on an exhausted quota instead of hammering the remaining repositories", async () => {
+    const { impl, calls } = queueFetch([
+      () =>
+        jsonResponse(
+          { message: "API rate limit exceeded" },
+          { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" } },
+        ),
+    ]);
+
+    await expect(
+      createGitHubAdapter().listCiRuns(
+        listIssuesRequest(
+          [
+            project("example-owner/one", "2026-09-30T10:00:00Z"),
+            project("example-owner/two", "2026-09-29T10:00:00Z"),
+          ],
+          impl,
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reports an unexpected payload shape as unavailable", async () => {
+    const { impl } = queueFetch([() => jsonResponse([FICTITIOUS_RUN])]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(outcome.repositories).toEqual([
+      {
+        repository: "example-owner/example-project",
+        read: false,
+        errorCode: "INVALID_RESPONSE (HTTP 200)",
+      },
+    ]);
+  });
+
+  it("reports a run without a readable date or link as unavailable rather than storing it", async () => {
+    const { impl } = queueFetch([
+      () => jsonResponse({ workflow_runs: [{ ...FICTITIOUS_RUN, updated_at: "pas une date" }] }),
+      () => jsonResponse({ workflow_runs: [{ ...FICTITIOUS_RUN, html_url: null }] }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest(
+        [
+          project("example-owner/one", "2026-09-30T10:00:00Z"),
+          project("example-owner/two", "2026-09-29T10:00:00Z"),
+        ],
+        impl,
+      ),
+    );
+
+    expect(outcome.repositories.map((result) => result.read)).toEqual([false, false]);
+  });
+
+  it("queries only the bounded selection, most recently pushed first", async () => {
+    const { impl, calls } = queueFetch([
+      () => jsonResponse({ workflow_runs: [] }),
+      () => jsonResponse({ workflow_runs: [] }),
+    ]);
+
+    const outcome = await createGitHubAdapter().listCiRuns(
+      listIssuesRequest(
+        [
+          project("example-owner/old", "2025-01-01T00:00:00Z"),
+          project("example-owner/new", "2026-09-30T10:00:00Z"),
+          project("example-owner/mid", "2026-06-01T00:00:00Z"),
+        ],
+        impl,
+        { maxRepositories: 2 },
+      ),
+    );
+
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining("/repos/example-owner/new/actions/runs"),
+      expect.stringContaining("/repos/example-owner/mid/actions/runs"),
+    ]);
+    expect(outcome.repositoriesSkipped).toBe(1);
+  });
+
+  it("never sends the token in the URL of a CI request", async () => {
+    const { impl, calls } = queueFetch([() => jsonResponse({ workflow_runs: [] })]);
+
+    await createGitHubAdapter().listCiRuns(
+      listIssuesRequest([project("example-owner/example-project", "2026-09-30T10:00:00Z")], impl),
+    );
+
+    expect(calls[0].url).not.toContain("fictitious-token");
+    expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer fictitious-token",
+    );
+  });
+});

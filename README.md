@@ -123,14 +123,17 @@ Working today:
   type, assignee, label, milestone, state, text), an actionable **work queue**
   (unanswered issues, old pull requests, work without a milestone or a label, blocked
   work, milestones due soon or overdue — each item with its age and a link to the
-  provider), milestones with their due dates and progress, and bounded **activity
+  provider), milestones with their due dates and progress, bounded **activity
   metrics** (open pull requests, their median age, inactive repositories, open-milestone
-  completion; open-to-merge time and issue throughput shown as unavailable), and
+  completion; open-to-merge time and issue throughput shown as unavailable),
   **repository health** indicators (inactive, issue backlog, overdue milestones, no
   description, no topics, no default branch — each with its rule and a link to the
-  provider). Issue and milestone requests are conditional (`ETag` / `Last-Modified`): an
-  unchanged repository answers 304 and is not rewritten, and the page shows when each
-  was checked versus changed. GitLab stays on project metadata, on purpose.
+  provider), and **CI status** (the latest GitHub Actions run of each workflow, most
+  recent first, linked to GitHub; needs `actions:read` on the token). Issue and
+  milestone requests are conditional (`ETag` / `Last-Modified`): an unchanged
+  repository answers 304 and is not rewritten, and the page shows when each was
+  checked versus changed. GitLab stays on project metadata, on purpose — pipelines
+  included.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".
@@ -229,12 +232,17 @@ recovery, on purpose.
 ### The proxy and the address you browse
 
 The `full` stack puts a small reverse proxy in front of the application: it is the
-front door, and the address to type is `http://dashboard.localhost:8888`:
+front door, and the address to type is `http://dashboard.localhost:8888`. The proxy
+comes from `compose.override.yaml`, which Docker Compose loads automatically; without
+that file, the application port is published directly (`APP_BIND_HOST:APP_PORT`), as
+after the hotfix that removed the proxy.
 
 ```sh
 # AUTH_URL, APP_HOST and PROXY_PORT already describe that origin in .env
 docker compose --profile full up -d --build
 ```
+
+Remove or rename `compose.override.yaml` to go back to direct access.
 
 Three variables describe that single origin, and they are not independent. A mismatch
 is invisible in `docker compose ps`: it only shows up in the browser.
