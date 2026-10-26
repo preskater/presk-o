@@ -229,12 +229,17 @@ recovery, on purpose.
 ### The proxy and the address you browse
 
 The `full` stack puts a small reverse proxy in front of the application: it is the
-front door, and the address to type is `http://dashboard.localhost:8888`:
+front door, and the address to type is `http://dashboard.localhost:8888`. The proxy
+comes from `compose.override.yaml`, which Docker Compose loads automatically; without
+that file, the application port is published directly (`APP_BIND_HOST:APP_PORT`), as
+after the hotfix that removed the proxy.
 
 ```sh
 # AUTH_URL, APP_HOST and PROXY_PORT already describe that origin in .env
 docker compose --profile full up -d --build
 ```
+
+Remove or rename `compose.override.yaml` to go back to direct access.
 
 Three variables describe that single origin, and they are not independent. A mismatch
 is invisible in `docker compose ps`: it only shows up in the browser.
