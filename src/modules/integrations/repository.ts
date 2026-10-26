@@ -430,6 +430,25 @@ export async function listIssues(userId: string): Promise<IssueSummary[]> {
   }));
 }
 
+/** Stored projects with the provider metrics the activity indicators read (DA-02). */
+export async function listProjects(
+  userId: string,
+): Promise<{ name: string; metrics: Record<string, unknown> | null }[]> {
+  const rows = await getPrisma().projectSnapshot.findMany({
+    where: { connection: { userId } },
+    orderBy: { name: "asc" },
+    select: { name: true, metrics: true },
+  });
+
+  return rows.map((row) => ({
+    name: row.name,
+    metrics:
+      typeof row.metrics === "object" && row.metrics !== null && !Array.isArray(row.metrics)
+        ? (row.metrics as Record<string, unknown>)
+        : null,
+  }));
+}
+
 /** One milestone as the interface displays it. */
 export type MilestoneSummary = {
   id: string;
