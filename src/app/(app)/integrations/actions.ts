@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { connectionInputSchema } from "@/modules/integrations/domain";
 import { upsertConnection } from "@/modules/integrations/repository";
 import { synchroniseConnection } from "@/jobs/sync";
@@ -16,7 +16,7 @@ import { synchroniseConnection } from "@/jobs/sync";
  */
 
 export async function connectProviderAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireModule("development");
 
   const parsed = connectionInputSchema.safeParse({
     provider: formData.get("provider"),
@@ -44,7 +44,7 @@ export async function connectProviderAction(formData: FormData): Promise<void> {
 }
 
 export async function syncConnectionAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireModule("development");
   const connectionId = formData.get("connectionId");
 
   if (typeof connectionId !== "string" || connectionId === "") {

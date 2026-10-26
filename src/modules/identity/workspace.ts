@@ -6,15 +6,21 @@
  * on its own.
  */
 
+import type { ModuleKey } from "@/modules/catalog/catalog";
+
 export type WorkspaceRole = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
 export type WorkspaceKind = "PERSONAL" | "FAMILY" | "COMPANY";
 
-/** One of the session user's memberships, with the role it grants there. */
+/**
+ * One of the session user's memberships, with the role it grants there and the
+ * modules active in that workspace (see `activeModules`).
+ */
 export type ActiveWorkspace = {
   id: string;
   name: string;
   kind: WorkspaceKind;
   role: WorkspaceRole;
+  modules: readonly ModuleKey[];
 };
 
 /** Identifier of the personal workspace every owner gets; matches the migration backfill. */

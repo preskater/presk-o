@@ -4,24 +4,24 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 
-const LINKS = [
-  { href: "/dashboard", label: "Tableau de bord" },
-  { href: "/budget", label: "Budget" },
-  { href: "/real-estate", label: "Immobilier" },
-  { href: "/integrations", label: "Intégrations" },
-  { href: "/alerts", label: "Alertes" },
-  { href: "/account", label: "Compte" },
-] as const;
+export type NavLink = { href: string; label: string };
 
 /**
- * Navigation only: no sensitive data and no authorisation decision here.
+ * Navigation only: no sensitive data and no authorisation decision here. The links
+ * arrive already filtered by the server layout from the workspace's active modules.
  *
  * Inline links from `lg` up; below, a burger menu built on a native `<details>`, so it
  * opens with the keyboard and is announced as expanded or collapsed without extra ARIA.
  * `children` is what the menu shows under the links on small screens (the account and
  * sign-out controls of the header).
  */
-export function MainNav({ children }: { children?: React.ReactNode }) {
+export function MainNav({
+  links,
+  children,
+}: {
+  links: readonly NavLink[];
+  children?: React.ReactNode;
+}) {
   const pathname = usePathname();
   const menu = useRef<HTMLDetailsElement>(null);
 
@@ -30,7 +30,7 @@ export function MainNav({ children }: { children?: React.ReactNode }) {
     if (menu.current) menu.current.open = false;
   }, [pathname]);
 
-  const links = LINKS.map((link) => {
+  const navLinks = links.map((link) => {
     const isActive = pathname === link.href || pathname.startsWith(`${link.href}/`);
 
     return (
@@ -52,7 +52,7 @@ export function MainNav({ children }: { children?: React.ReactNode }) {
   return (
     <>
       <nav aria-label="Navigation principale" className="hidden flex-wrap gap-1 lg:flex">
-        {links}
+        {navLinks}
       </nav>
 
       <details ref={menu} className="group/menu lg:hidden">
@@ -70,7 +70,7 @@ export function MainNav({ children }: { children?: React.ReactNode }) {
 
         <div className="absolute inset-x-0 top-full z-20 flex flex-col gap-3 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <nav aria-label="Navigation principale" className="flex flex-col gap-1">
-            {links}
+            {navLinks}
           </nav>
           {children}
         </div>

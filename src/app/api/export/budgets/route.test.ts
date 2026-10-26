@@ -12,6 +12,7 @@ vi.mock("@/lib/auth/guard", () => ({
       status: 401,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     }),
+  moduleUnavailableResponse: () => new Response(null, { status: 404 }),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listBudgets: (...args: unknown[]) => listBudgetsMock(...args),
@@ -24,7 +25,12 @@ const { GET } = await import("./route");
  * the read is owner-scoped, the month filter has a defined fallback, an empty month
  * still produces a header line, and the CSV guards keep applying to the new columns.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget"] },
+};
 
 const BUDGET_EUR = {
   id: "budget-1",
@@ -64,6 +70,15 @@ describe("GET /api/export/budgets", () => {
     const response = await GET(new Request("http://test.local/api/export/budgets"));
 
     expect(response.status).toBe(401);
+    expect(listBudgetsMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 and reads nothing when the budget module is disabled", async () => {
+    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+
+    const response = await GET(new Request("http://test.local/api/export/budgets"));
+
+    expect(response.status).toBe(404);
     expect(listBudgetsMock).not.toHaveBeenCalled();
   });
 

@@ -8,7 +8,7 @@ const updateGoalMock = vi.fn();
 const deleteGoalMock = vi.fn();
 const revalidatePathMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/budget/repository", () => ({
   findAccount: (...args: unknown[]) => findAccountMock(...args),
   createGoal: (...args: unknown[]) => createGoalMock(...args),

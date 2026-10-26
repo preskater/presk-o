@@ -1,4 +1,5 @@
 import { getPrisma } from "@/lib/db";
+import { activeModules, DEFAULT_MODULES } from "@/modules/catalog/catalog";
 import { type ActiveWorkspace, defaultWorkspaceId } from "@/modules/identity/workspace";
 
 /**
@@ -99,16 +100,30 @@ export async function listMemberships(userId: string): Promise<ActiveWorkspace[]
   const rows = await getPrisma().workspaceMember.findMany({
     where: { userId },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { role: true, workspace: { select: { id: true, name: true, kind: true } } },
+    select: {
+      role: true,
+      workspace: {
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          modules: { select: { moduleKey: true, enabled: true } },
+        },
+      },
+    },
   });
 
-  return rows.map(({ role, workspace }) => ({ ...workspace, role }));
+  return rows.map(({ role, workspace: { modules, ...workspace } }) => ({
+    ...workspace,
+    role,
+    modules: activeModules(modules),
+  }));
 }
 
 /**
- * Gives the owner their personal workspace. Used by the seed script; idempotent and
- * writes the same identifiers as the migration backfill, so neither path duplicates
- * the other.
+ * Gives the owner their personal workspace with the default modules. Used by the seed
+ * script; idempotent and writes the same rows as the migration backfills, so neither
+ * path duplicates the other. A module the owner disabled since stays disabled.
  */
 export async function ensureDefaultWorkspace(userId: string): Promise<void> {
   const workspaceId = defaultWorkspaceId(userId);
@@ -124,6 +139,10 @@ export async function ensureDefaultWorkspace(userId: string): Promise<void> {
       where: { workspaceId_userId: { workspaceId, userId } },
       create: { id: `wm-${userId}`, workspaceId, userId, role: "OWNER" },
       update: {},
+    }),
+    prisma.workspaceModule.createMany({
+      data: DEFAULT_MODULES.map((moduleKey) => ({ workspaceId, moduleKey })),
+      skipDuplicates: true,
     }),
   ]);
 }

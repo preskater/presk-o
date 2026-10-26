@@ -14,6 +14,7 @@ the pages that consume it.
 | Module | Responsibility | Key files |
 | --- | --- | --- |
 | `identity` | The owner account and workspace memberships (roles `OWNER`, `ADMIN`, `MEMBER`, `VIEWER`). No public sign-up: the account and its personal workspace are created by the seed script. | `repository.ts`, `workspace.ts` |
+| `catalog` | Module catalog (stable keys, prerequisites, configuration schemas) and per-workspace activation. Navigation and the module guards read from it. | `catalog.ts`, `repository.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
@@ -622,6 +623,17 @@ beside its fields.
   is not a member of reads as "not found". The migration gives each existing user a
   personal workspace (`ws-<userId>`) as `OWNER`; records stay owned by `userId` until
   the scoping migration (M7-04).
+- Modules: the keys of `src/modules/catalog/catalog.ts` are the only ones accepted
+  (`budget`, `real-estate`, `development`, `ai-costs`, `agents`, `micro-business`,
+  `profitability`, `automation`, `family`). A module is active in a workspace when its
+  `WorkspaceModule` row is enabled and all its prerequisites are active
+  (`profitability` needs `budget` and `real-estate`). The module's pages and Server
+  Actions call `requireModule(key)`, which answers 404 otherwise; its exports answer a
+  404 JSON body. The navigation is built by the server layout from the active modules.
+  Disabling only flips `enabled`: records and configuration stay. Enabling writes the
+  activation row only. The migration enables `budget`, `real-estate` and `development`
+  on every existing workspace. The dashboard, the alerts and the account page are not
+  modules: they are not gated yet (dashboard cards: M7-03).
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.

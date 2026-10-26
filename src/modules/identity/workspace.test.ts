@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { type ActiveWorkspace, defaultWorkspaceId, resolveActiveWorkspace } from "./workspace";
 
 /** Fictitious workspaces only, oldest first as `listMemberships` returns them. */
-const personal: ActiveWorkspace = { id: "ws-user-1", name: "Personnel", kind: "PERSONAL", role: "OWNER" };
-const family: ActiveWorkspace = { id: "ws-family", name: "Famille", kind: "FAMILY", role: "VIEWER" };
+const personal: ActiveWorkspace = { id: "ws-user-1", name: "Personnel", kind: "PERSONAL", role: "OWNER", modules: ["budget"] };
+const family: ActiveWorkspace = { id: "ws-family", name: "Famille", kind: "FAMILY", role: "VIEWER", modules: [] };
 
 describe("resolveActiveWorkspace", () => {
   it("refuses a user without any membership", () => {

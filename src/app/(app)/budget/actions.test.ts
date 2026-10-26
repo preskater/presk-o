@@ -37,7 +37,7 @@ const createTransferGroupMock = vi.fn();
 const setTransactionReconciledMock = vi.fn();
 const copyBudgetsMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/budget/repository", () => ({
   deleteTransaction: (...args: unknown[]) => deleteTransactionMock(...args),
   createTransaction: (...args: unknown[]) => createTransactionMock(...args),
@@ -185,6 +185,16 @@ describe("deleteTransactionAction", () => {
     requireUserMock.mockRejectedValue(new Error("redirect:/login"));
 
     await expect(deleteTransactionAction({ id: "tx-1" })).rejects.toThrow("redirect:/login");
+    expect(deleteTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("is rejected without writing when the budget module is disabled", async () => {
+    // `requireModule` answers 404 for a module the workspace has not enabled: a
+    // forged POST to the action reaches the guard, never the repository.
+    requireUserMock.mockRejectedValue(new Error("not-found"));
+
+    await expect(deleteTransactionAction({ id: "tx-1" })).rejects.toThrow("not-found");
+    expect(requireUserMock).toHaveBeenCalledWith("budget");
     expect(deleteTransactionMock).not.toHaveBeenCalled();
   });
 });
