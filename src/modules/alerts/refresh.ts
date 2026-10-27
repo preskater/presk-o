@@ -9,7 +9,7 @@ import {
 import { buildBudgetReport } from "@/modules/budget/report";
 import {
   listAccountBalanceTotals,
-  listAccounts,
+  listAccountsForManagement,
   listBudgets,
   listTransactionsForSeries,
 } from "@/modules/budget/repository";
@@ -57,7 +57,7 @@ export async function refreshAlerts(
   const [ruleRows, accounts, balanceTotals, budgets, monthSeries, connections, dueCashflows, existing] =
     await Promise.all([
       listAlertRules(workspaceId),
-      listAccounts(workspaceId),
+      listAccountsForManagement(workspaceId),
       listAccountBalanceTotals(workspaceId),
       listBudgets(workspaceId, { year, month }),
       listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
@@ -72,13 +72,16 @@ export async function refreshAlerts(
   // An account absent from the grouped read has nothing recorded: its balance stays
   // unknown (count 0) and the low-balance rule leaves it alone.
   const byAccount = new Map(balanceTotals.map((total) => [total.accountId, total]));
-  const accountBalances = accounts.map((account) => ({
-    accountId: account.id,
-    accountName: account.name,
-    currency: account.currency,
-    transactionCount: byAccount.get(account.id)?.transactionCount ?? 0,
-    balance: byAccount.get(account.id)?.balance ?? new Decimal(0),
-  }));
+  const accountBalances = accounts
+    .filter((account) => account.archivedAt === null)
+    .map((account) => ({
+      accountId: account.id,
+      accountName: account.name,
+      currency: account.currency,
+      transactionCount: byAccount.get(account.id)?.transactionCount ?? 0,
+      balance: byAccount.get(account.id)?.balance ?? new Decimal(0),
+      lowBalanceThreshold: account.lowBalanceThreshold,
+    }));
 
   // One report for both budget rules, so overrun and threshold can never disagree.
   const reportRows = buildBudgetReport(budgets, monthSeries.transactions);

@@ -464,6 +464,7 @@ export async function createAccount(input: {
   name: string;
   type: AccountType;
   currency: Currency;
+  lowBalanceThreshold: Decimal | null;
 }): Promise<{ id: string }> {
   return getPrisma().account.create({
     data: {
@@ -471,6 +472,7 @@ export async function createAccount(input: {
       name: input.name.trim(),
       type: input.type,
       currency: input.currency,
+      lowBalanceThreshold: input.lowBalanceThreshold?.toFixed(2) ?? null,
     },
     select: { id: true },
   });
@@ -482,6 +484,7 @@ export type AccountManagementRecord = {
   name: string;
   type: AccountType;
   currency: Currency;
+  lowBalanceThreshold: Decimal | null;
   archivedAt: Date | null;
 };
 
@@ -492,7 +495,14 @@ export async function listAccountsForManagement(
   const rows = await getPrisma().account.findMany({
     where: { workspaceId },
     orderBy: [{ createdAt: "asc" }],
-    select: { id: true, name: true, type: true, currency: true, archivedAt: true },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      currency: true,
+      lowBalanceThreshold: true,
+      archivedAt: true,
+    },
   });
 
   return rows.map((row) => ({
@@ -500,6 +510,10 @@ export async function listAccountsForManagement(
     name: row.name,
     type: row.type as AccountType,
     currency: assertCurrency(row.currency),
+    lowBalanceThreshold:
+      row.lowBalanceThreshold === null
+        ? null
+        : new Decimal(row.lowBalanceThreshold.toString()),
     archivedAt: row.archivedAt,
   }));
 }
@@ -511,7 +525,14 @@ export async function findManagedAccount(
 ): Promise<AccountManagementRecord | null> {
   const row = await getPrisma().account.findFirst({
     where: { id: accountId, workspaceId },
-    select: { id: true, name: true, type: true, currency: true, archivedAt: true },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      currency: true,
+      lowBalanceThreshold: true,
+      archivedAt: true,
+    },
   });
 
   return row
@@ -520,6 +541,10 @@ export async function findManagedAccount(
         name: row.name,
         type: row.type as AccountType,
         currency: assertCurrency(row.currency),
+        lowBalanceThreshold:
+          row.lowBalanceThreshold === null
+            ? null
+            : new Decimal(row.lowBalanceThreshold.toString()),
         archivedAt: row.archivedAt,
       }
     : null;
@@ -537,11 +562,21 @@ export async function countAccountTransactions(
 export async function updateAccount(
   workspaceId: string,
   accountId: string,
-  input: { name: string; type: AccountType; currency: Currency },
+  input: {
+    name: string;
+    type: AccountType;
+    currency: Currency;
+    lowBalanceThreshold: Decimal | null;
+  },
 ): Promise<boolean> {
   const { count } = await getPrisma().account.updateMany({
     where: { id: accountId, workspaceId },
-    data: { name: input.name.trim(), type: input.type, currency: input.currency },
+    data: {
+      name: input.name.trim(),
+      type: input.type,
+      currency: input.currency,
+      lowBalanceThreshold: input.lowBalanceThreshold?.toFixed(2) ?? null,
+    },
   });
 
   return count === 1;
@@ -1939,6 +1974,70 @@ export async function listAccountBalanceTotals(
     balance: new Decimal(row._sum.amount?.toString() ?? "0"),
     lastOperationDate: row._max.operationDate ?? null,
   }));
+}
+
+/**
+ * The signed total of each account, optionally restricted to operations dated
+ * strictly before a bound.
+ *
+ * The simulation needs both figures: the all-time balance (what the account holds
+ * now) and the opening balance at the start of its projection window. Reading the
+ * opening balance from the rows themselves would stop at the read bound; this
+ * aggregate stays exact whatever the history's size.
+ */
+export async function sumTransactionsByAccount(
+  workspaceId: string,
+  window: { before?: Date } = {},
+): Promise<Map<string, { currency: Currency; transactionCount: number; balance: Decimal }>> {
+  const rows = await getPrisma().transaction.groupBy({
+    by: ["accountId", "currency"],
+    where: {
+      workspaceId,
+      ...(window.before ? { operationDate: { lt: window.before } } : {}),
+    },
+    _count: { _all: true },
+    _sum: { amount: true },
+  });
+
+  return new Map(
+    rows.map((row) => [
+      row.accountId,
+      {
+        currency: assertCurrency(row.currency),
+        transactionCount: row._count._all,
+        balance: new Decimal(row._sum.amount?.toString() ?? "0"),
+      },
+    ]),
+  );
+}
+
+/**
+ * Net expenses of each account over a window, as a positive magnitude.
+ *
+ * Used to suggest a safety floor: one month of the account's usual spending. A refund
+ * (a positive amount on an EXPENSE row) reduces the figure; a negative net expense —
+ * more refunds than expenses — reads as zero, because a cushion is not a credit.
+ */
+export async function sumExpensesByAccount(
+  workspaceId: string,
+  window: { from: Date; to: Date },
+): Promise<Map<string, Decimal>> {
+  const rows = await getPrisma().transaction.groupBy({
+    by: ["accountId"],
+    where: {
+      workspaceId,
+      type: "EXPENSE",
+      operationDate: { gte: window.from, lt: window.to },
+    },
+    _sum: { amount: true },
+  });
+
+  return new Map(
+    rows.map((row) => {
+      const net = new Decimal(row._sum.amount?.toString() ?? "0").negated();
+      return [row.accountId, net.greaterThan(0) ? net : new Decimal(0)];
+    }),
+  );
 }
 
 /**

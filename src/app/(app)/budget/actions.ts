@@ -83,6 +83,12 @@ import {
 import { resolveTransactionInput } from "@/modules/budget/transactions";
 import { defaultTransferLabels, transferLegEditRefusedReason } from "@/modules/budget/transfers";
 import { findCashflowLinkedToTransaction } from "@/modules/real-estate/repository";
+import { expenseSimulationSchema } from "@/modules/budget/simulation";
+import {
+  serializeSimulationResult,
+  type SerializedSimulationResult,
+} from "@/modules/budget/simulation-contract";
+import { runExpenseSimulation } from "@/modules/budget/simulation-service";
 
 /**
  * Write Server Actions for the budget module.
@@ -107,6 +113,7 @@ export async function createAccountAction(values: unknown): Promise<ActionResult
       name: parsed.data.name,
       type: parsed.data.type,
       currency: parsed.data.currency,
+      lowBalanceThreshold: parsed.data.lowBalanceThreshold,
     });
   } catch (error) {
     return unexpectedResult("createAccount", error);
@@ -175,6 +182,46 @@ export async function createTransactionAction(values: unknown): Promise<ActionRe
   revalidatePath("/budget");
   revalidatePath("/dashboard");
   return { status: "ok" };
+}
+
+export type ExpenseSimulationActionResult =
+  | { status: "ok"; simulation: SerializedSimulationResult }
+  | Extract<ActionResult, { status: "invalid" | "error" }>;
+
+/**
+ * A read-only scenario. It goes through the same authorisation and validation as a
+ * write, because a Server Action is a public endpoint, but it never revalidates a
+ * path: no row changed.
+ */
+export async function simulateExpenseAction(
+  values: unknown,
+): Promise<ExpenseSimulationActionResult> {
+  const user = await requireModule("budget");
+  const parsed = expenseSimulationSchema.safeParse(values);
+  if (!parsed.success) {
+    return invalidResult(parsed.error) as ExpenseSimulationActionResult;
+  }
+
+  try {
+    const outcome = await runExpenseSimulation({
+      workspaceId: user.workspace.id,
+      values: parsed.data,
+    });
+
+    if (!outcome.ok) {
+      return rejectedResult(
+        outcome.field,
+        outcome.message,
+      ) as ExpenseSimulationActionResult;
+    }
+
+    return {
+      status: "ok",
+      simulation: serializeSimulationResult(outcome.result),
+    };
+  } catch (error) {
+    return unexpectedResult("simulateExpense", error) as ExpenseSimulationActionResult;
+  }
 }
 
 /**
@@ -713,6 +760,7 @@ export async function updateAccountAction(values: unknown): Promise<ActionResult
       name: input.name,
       type: input.type,
       currency: input.currency,
+      lowBalanceThreshold: input.lowBalanceThreshold,
     });
 
     if (!updated) {

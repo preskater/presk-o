@@ -272,6 +272,10 @@ model Account {
   name      String
   type      AccountType @default(CHECKING)
   currency  String      @default("EUR") @db.Char(3)
+  /// Optional owner-defined low-balance floor, in the account currency. Null means
+  /// "no explicit floor": the simulation suggests one from the account's expenses,
+  /// while the alert engine falls back to the global LOW_BALANCE rule.
+  lowBalanceThreshold Decimal? @db.Decimal(18, 2)
   archivedAt DateTime?
   createdAt DateTime    @default(now()) @db.Timestamptz(3)
   updatedAt DateTime    @updatedAt @db.Timestamptz(3)

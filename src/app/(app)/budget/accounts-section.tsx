@@ -74,6 +74,7 @@ export async function AccountsSection({
     name: account.name,
     type: account.type,
     currency: account.currency,
+    lowBalanceThreshold: account.lowBalanceThreshold?.toFixed(2) ?? null,
     archived: account.archivedAt !== null,
     transactionCount: balanceByAccount.get(account.id)?.transactionCount ?? 0,
   }));
@@ -82,7 +83,7 @@ export async function AccountsSection({
     <>
       <Card
         title={`Soldes et projection — fin ${monthLabel}`}
-        description="Solde enregistré : somme signée des opérations du compte. Solde projeté : solde enregistré + échéances du mois affiché encore en attente de décision. Sur un mois passé, lisez-le comme « ce qui restait à traiter ». Le salaire simulé non enregistré n'est attribué à aucun compte : il reste dans Prévisions."
+        description="Solde enregistré : somme signée des opérations du compte. Seuil de solde bas : montant à conserver, défini dans la gestion des comptes ; « Automatique » utilise un mois de dépenses suggéré par la simulation. Solde projeté : solde enregistré + échéances du mois affiché encore en attente de décision. Le salaire simulé non enregistré n'est attribué à aucun compte : il reste dans Prévisions."
       >
         {rows.length === 0 ? (
           <EmptyState
@@ -91,7 +92,7 @@ export async function AccountsSection({
           />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-sm">
+            <table className="w-full min-w-[880px] border-collapse text-sm">
               <caption className="sr-only">Soldes par compte</caption>
               <thead>
                 <tr>
@@ -103,6 +104,9 @@ export async function AccountsSection({
                   </th>
                   <th scope="col" className={`${thClass} text-right`}>
                     Solde enregistré
+                  </th>
+                  <th scope="col" className={`${thClass} text-right`}>
+                    Seuil de solde bas
                   </th>
                   <th scope="col" className={`${thClass} text-right`}>
                     Échéances en attente
@@ -127,6 +131,18 @@ export async function AccountsSection({
                       {recorded.transactionCount === 0
                         ? "— (aucune opération)"
                         : formatMoney({ amount: recorded.balance, currency: account.currency })}
+                    </td>
+                    <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
+                      {account.lowBalanceThreshold === null ? (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                          Automatique
+                        </span>
+                      ) : (
+                        formatMoney({
+                          amount: account.lowBalanceThreshold,
+                          currency: account.currency,
+                        })
+                      )}
                     </td>
                     <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
                       {projection.pendingCount === 0
@@ -172,7 +188,7 @@ export async function AccountsSection({
 
       <Card
         title="Gérer les comptes"
-        description="Renommer, changer le type, archiver ou réactiver. Un compte porteur d'opérations garde sa devise : rien n'est converti. L'archivage retire le compte des formulaires et des alertes sans toucher à son historique."
+        description="Renommer, changer le type, définir le seuil de solde bas, archiver ou réactiver. Le seuil du compte est prioritaire ; à défaut, la règle globale s'applique si elle est au moins égale à la suggestion, sinon la simulation suggère un mois de dépenses. Un compte porteur d'opérations garde sa devise : rien n'est converti. L'archivage retire le compte des formulaires et des alertes sans toucher à son historique."
       >
         {managedAccounts.length === 0 ? (
           <Notice tone="info">Aucun compte à gérer pour l&apos;instant.</Notice>

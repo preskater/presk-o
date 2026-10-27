@@ -372,6 +372,44 @@ asked for: a cascade here would silently change what a property is worth.
   be inventing data. On a past month the figure reads as "what was still to be processed".
   An account with no recorded transaction keeps an **unknown** starting balance: its
   projection stays "—" while the pending net is still told — nothing is made up from it.
+- Expense simulation (budget page, « Simuler une dépense ») — a **read-only** scenario
+  built from the same rows as the Prévisions and Suivi tabs. It writes no transaction
+  and changes no threshold.
+  - The total is the sum of the payments; it is never typed separately. A scenario may
+    split one expense into several dated payments, possibly on different accounts.
+  - A payment may omit its account. The engine then suggests a split: checking, cash
+    and card accounts before other accounts, and savings last; within one family, the
+    largest projected balance first. It tries to preserve the configured low-balance
+    threshold, then keeps balances positive, and only in a last pass accepts going
+    below the floor. Accounts without a recorded operation and archived accounts are
+    never used; an amount no account can receive stays explicitly unallocated.
+  - The window starts at the current month and always covers the current month plus the
+    next six. A past or future payment widens it, three months follow the last payment,
+    and 24 months is the hard bound.
+  - *Balance before scenario* — opening balance + recorded operations + pending
+    forecasts dated in the month. *Balance after scenario* — the same, plus the
+    simulated payments. A confirmed forecast is already a recorded transaction and is
+    never counted twice.
+  - The salary simulation is a **currency-level** forecast: it advances the global
+    balance but no account balance until it is booked.
+  - *Account point low* — the minimum projected balance of an account over the window.
+    *Global point low* — the same for the sum of the currency's accounts.
+  - The floor is resolved per account, in this order: the account's own
+    `lowBalanceThreshold` (Comptes tab), then a positive global `LOW_BALANCE` rule
+    when it applies to the account's currency and is at least the suggestion, then a
+    **suggestion of one month of expenses** — the average of the last three complete
+    months, or the current month's still-pending expenses when they are higher. The
+    analysis labels the source on every account. The suggestion is simulation-only;
+    the alert engine uses the account setting or the global rule, and an account setting
+    remains active even when the global rule is disabled.
+  - A negative balance is flagged even without a positive floor. A breach already
+    present before the scenario is distinguished from one the scenario causes.
+  - An account with no recorded operation keeps an **unknown** balance, never zero.
+    Currencies are never converted; a scenario is single-currency.
+  - With a category selected, the budget impact reuses the Suivi rules (expenses
+    positive, refunds reducing, transfers and uncategorised rows excluded) and, when
+    the rule is enabled, applies the `BUDGET_THRESHOLD` percentage as the preventive
+    alert line. A month without a budget is « no budget », not a zero envelope.
 - Property totals — each cashflow entry counts once. When an entry is linked to
   a transaction, the transaction is the only source of the amount.
 - Property financing (real-estate page, « Financement » card) — the loans of a property,

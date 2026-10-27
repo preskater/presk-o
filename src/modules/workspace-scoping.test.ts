@@ -58,7 +58,13 @@ describe("budget", () => {
   });
 
   it("writes a new account into the given workspace only", async () => {
-    await createAccount({ workspaceId: "ws-1", name: " Courant ", type: "CHECKING", currency: "EUR" });
+    await createAccount({
+      workspaceId: "ws-1",
+      name: " Courant ",
+      type: "CHECKING",
+      currency: "EUR",
+      lowBalanceThreshold: null,
+    });
 
     expect(createMock.mock.calls[0][0]).toMatchObject({ data: { workspaceId: "ws-1", name: "Courant" } });
   });

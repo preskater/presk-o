@@ -3,8 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Notice, inputClass, submitClass, tdClass } from "@/components/ui";
+import Decimal from "decimal.js";
 import { ACCOUNT_TYPE_LABELS, type AccountType } from "@/modules/budget/domain";
-import { SUPPORTED_CURRENCIES, type Currency } from "@/lib/money";
+import {
+  formatMoney,
+  SUPPORTED_CURRENCIES,
+  type Currency,
+} from "@/lib/money";
 import { setAccountArchivedAction, updateAccountAction } from "./actions";
 
 /**
@@ -22,11 +27,18 @@ export type ManagedAccount = {
   name: string;
   type: AccountType;
   currency: Currency;
+  /** Raw two-decimal string: Decimals do not cross the Server/Client boundary. */
+  lowBalanceThreshold: string | null;
   archived: boolean;
   transactionCount: number;
 };
 
-type Draft = { name: string; type: AccountType; currency: Currency };
+type Draft = {
+  name: string;
+  type: AccountType;
+  currency: Currency;
+  lowBalanceThreshold: string;
+};
 
 export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
   const router = useRouter();
@@ -56,7 +68,13 @@ export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
         return;
       }
 
-      setMessage(account.id, "error", outcome.message);
+      setMessage(
+        account.id,
+        "error",
+        outcome.status === "invalid"
+          ? Object.values(outcome.fieldErrors).flat()[0] ?? outcome.message
+          : outcome.message,
+      );
     });
   }
 
@@ -86,7 +104,7 @@ export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-sm">
+      <table className="w-full min-w-[880px] border-collapse text-sm">
         <caption className="sr-only">Gestion des comptes</caption>
         <thead>
           <tr>
@@ -98,6 +116,9 @@ export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
             </th>
             <th scope="col" className="border-b border-zinc-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
               Devise
+            </th>
+            <th scope="col" className="border-b border-zinc-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+              Seuil de solde bas
             </th>
             <th scope="col" className="border-b border-zinc-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
               État
@@ -175,6 +196,39 @@ export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
                   ) : null}
                 </td>
                 <td className={tdClass}>
+                  {editing ? (
+                    <>
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        aria-label={`Seuil de solde bas du compte ${account.name}`}
+                        value={draft.lowBalanceThreshold}
+                        placeholder="Automatique"
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            lowBalanceThreshold: event.target.value,
+                          })
+                        }
+                      />
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Vide = seuil suggéré par la simulation.
+                      </p>
+                    </>
+                  ) : account.lowBalanceThreshold === null ? (
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Automatique
+                    </span>
+                  ) : (
+                    <span className="tabular-nums">
+                      {formatMoney({
+                        amount: new Decimal(account.lowBalanceThreshold),
+                        currency: account.currency,
+                      })}
+                    </span>
+                  )}
+                </td>
+                <td className={tdClass}>
                   {account.archived ? (
                     <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
                       Archivé
@@ -216,6 +270,8 @@ export function AccountsManager({ accounts }: { accounts: ManagedAccount[] }) {
                               name: account.name,
                               type: account.type,
                               currency: account.currency,
+                              lowBalanceThreshold:
+                                account.lowBalanceThreshold ?? "",
                             });
                             setEditingId(account.id);
                             setMessages((current) => ({ ...current, [account.id]: undefined }));

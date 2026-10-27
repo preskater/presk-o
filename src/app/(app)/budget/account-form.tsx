@@ -30,7 +30,12 @@ const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
 export function AccountForm() {
   const form = useForm<AccountInput>({
     resolver: zodResolver(accountInputSchema, undefined, { raw: true }),
-    defaultValues: { name: "", type: "CHECKING", currency: "EUR" },
+    defaultValues: {
+      name: "",
+      type: "CHECKING",
+      currency: "EUR",
+      lowBalanceThreshold: "",
+    },
   });
   const { result, submit } = useRecordedAction(form, createAccountAction);
   const { errors, isSubmitting } = form.formState;
@@ -65,6 +70,23 @@ export function AccountForm() {
           ))}
         </select>
       </Field>
+
+      <div className="sm:col-span-3">
+        <Field
+          label="Seuil de solde bas (facultatif)"
+          htmlFor="account-threshold"
+          error={errors.lowBalanceThreshold?.message}
+          hint="Montant à conserver sur ce compte. Vide = seuil suggéré dans la simulation à partir d'un mois de dépenses."
+        >
+          <input
+            id="account-threshold"
+            className={inputClass}
+            inputMode="decimal"
+            placeholder="Automatique"
+            {...form.register("lowBalanceThreshold")}
+          />
+        </Field>
+      </div>
 
       <div className="sm:col-span-3">
         <SubmitButton label="Ajouter le compte" pending={isSubmitting} />
