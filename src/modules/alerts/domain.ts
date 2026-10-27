@@ -432,7 +432,7 @@ export type AlertRuleConfig = {
  */
 export const ALERT_RULE_DESCRIPTIONS: Record<AlertKind, string> = {
   LOW_BALANCE:
-    "Déclenche quand le solde enregistré d'un compte passe sous le seuil. Un compte sans aucune opération n'est pas « à zéro » : il n'est pas évalué. Un seuil de zéro vaut pour toutes les devises ; un seuil supérieur ne compare que les comptes dans sa devise (aucune conversion n'est faite).",
+    "Déclenche quand le solde enregistré d'un compte passe sous son seuil. Un seuil défini sur le compte (onglet Comptes) est prioritaire et reste actif même si cette règle globale est désactivée ; à défaut, cette règle globale s'applique. Un compte sans aucune opération n'est pas « à zéro » : il n'est pas évalué. Un seuil global de zéro vaut pour toutes les devises ; un seuil supérieur ne compare que les comptes dans sa devise (aucune conversion n'est faite).",
   BUDGET_OVERRUN:
     "Déclenche quand le réalisé d'un budget de dépense dépasse le montant planifié du mois (règle du Suivi : remboursements déduits, opérations du mois uniquement). La marge est le pourcentage de dépassement à partir duquel l'alerte apparaît.",
   BUDGET_THRESHOLD:

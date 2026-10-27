@@ -1,6 +1,7 @@
 import type { Currency } from "@/lib/money";
 import type {
   BudgetImpactStatus,
+  SimulationFloorSource,
   SimulationResult,
   SimulationVerdict,
 } from "./simulation";
@@ -37,10 +38,18 @@ export type SerializedSimulationResult = {
       accountName: string;
       monthKey: string;
       amount: string;
+      floor: string;
+      floorSource: SimulationFloorSource;
       causedByScenario: boolean;
     } | null;
     globalNegativeMonth: string | null;
-    threshold: { amount: string; currency: Currency | null } | null;
+    thresholds: {
+      accountCount: number;
+      configuredCount: number;
+      globalCount: number;
+      suggestedCount: number;
+      noneCount: number;
+    };
   };
   months: {
     key: string;
@@ -66,6 +75,8 @@ export type SerializedSimulationResult = {
     archived: boolean;
     recordedBalance: string | null;
     paymentsTotal: string;
+    floor: string;
+    floorSource: SimulationFloorSource;
     currentMonthEndBefore: string | null;
     currentMonthEndAfter: string | null;
     lowestAfter: string | null;
@@ -76,7 +87,7 @@ export type SerializedSimulationResult = {
   }[];
   payments: {
     index: number;
-    accountId: string;
+    accountId: string | null;
     accountName: string;
     currency: Currency;
     amount: string;
@@ -87,6 +98,19 @@ export type SerializedSimulationResult = {
     accountCumulative: string;
     thresholdBreached: boolean | null;
     thresholdCausedByScenario: boolean;
+    allocations: {
+      accountId: string;
+      accountName: string;
+      amount: string;
+      balanceBefore: string;
+      balanceAfter: string;
+      floor: string;
+      floorSource: SimulationFloorSource;
+      preservesFloor: boolean;
+      thresholdBreached: boolean;
+      thresholdCausedByScenario: boolean;
+    }[];
+    unallocatedAmount: string;
   }[];
   budget: {
     categoryId: string;
@@ -139,15 +163,11 @@ export function serializeSimulationResult(
         ? {
             ...result.summary.firstThresholdBreach,
             amount: result.summary.firstThresholdBreach.amount.toFixed(2),
+            floor: result.summary.firstThresholdBreach.floor.toFixed(2),
           }
         : null,
       globalNegativeMonth: result.summary.globalNegativeMonth,
-      threshold: result.summary.threshold
-        ? {
-            amount: result.summary.threshold.amount.toFixed(2),
-            currency: result.summary.threshold.currency,
-          }
-        : null,
+      thresholds: result.summary.thresholds,
     },
     months: result.months.map((month) => ({
       ...month,
@@ -164,6 +184,7 @@ export function serializeSimulationResult(
       ...account,
       recordedBalance: decimal(account.recordedBalance),
       paymentsTotal: account.paymentsTotal.toFixed(2),
+      floor: account.floor.toFixed(2),
       currentMonthEndBefore: decimal(account.currentMonthEndBefore),
       currentMonthEndAfter: decimal(account.currentMonthEndAfter),
       lowestAfter: decimal(account.lowestAfter),
@@ -176,6 +197,14 @@ export function serializeSimulationResult(
       balanceAfter: decimal(payment.balanceAfter),
       globalBalanceAfter: decimal(payment.globalBalanceAfter),
       accountCumulative: payment.accountCumulative.toFixed(2),
+      unallocatedAmount: payment.unallocatedAmount.toFixed(2),
+      allocations: payment.allocations.map((allocation) => ({
+        ...allocation,
+        amount: allocation.amount.toFixed(2),
+        balanceBefore: allocation.balanceBefore.toFixed(2),
+        balanceAfter: allocation.balanceAfter.toFixed(2),
+        floor: allocation.floor.toFixed(2),
+      })),
     })),
     budget: result.budget
       ? {

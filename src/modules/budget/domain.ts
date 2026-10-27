@@ -5,6 +5,7 @@ import { toDecimalString, type Currency } from "@/lib/money";
 import {
   amount,
   currencyCode,
+  optionalAmount,
   optionalId,
   optionalText,
   requiredDate,
@@ -143,6 +144,10 @@ export const accountInputSchema = z.object({
   name: z.string().trim().min(1, "Le nom du compte est requis.").max(120),
   type: z.enum(ACCOUNT_TYPES),
   currency: currencyCode,
+  lowBalanceThreshold: optionalAmount.refine(
+    (value) => value === null || value.greaterThanOrEqualTo(0),
+    "Le seuil de solde bas ne peut pas être négatif.",
+  ),
 });
 
 export type AccountInput = z.input<typeof accountInputSchema>;

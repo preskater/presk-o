@@ -31,6 +31,7 @@ function account(overrides: Partial<Parameters<typeof evaluateLowBalance>[0][num
     currency: "EUR" as const,
     transactionCount: 3,
     balance: new Decimal("42.50"),
+    lowBalanceThreshold: null,
     ...overrides,
   };
 }
@@ -73,8 +74,39 @@ describe("evaluateLowBalance", () => {
     expect(evaluateLowBalance([usd], threshold100)).toEqual([]);
   });
 
-  it("stays quiet when disabled", () => {
+  it("uses the per-account threshold before the global rule", () => {
+    const candidates = evaluateLowBalance(
+      [account({ lowBalanceThreshold: new Decimal("60") })],
+      threshold100,
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].inputs.threshold).toBe("60.00");
+  });
+
+  it("applies a per-account threshold even when the global rule uses another currency", () => {
+    const usd = account({
+      accountId: "account-usd",
+      currency: "USD",
+      balance: new Decimal("10"),
+      lowBalanceThreshold: new Decimal("20"),
+    });
+
+    expect(evaluateLowBalance([usd], threshold100)).toHaveLength(1);
+  });
+
+  it("stays quiet when disabled and no account threshold exists", () => {
     expect(evaluateLowBalance([account()], { ...threshold100, enabled: false })).toEqual([]);
+  });
+
+  it("keeps an explicit account threshold active when the global rule is disabled", () => {
+    const candidates = evaluateLowBalance(
+      [account({ lowBalanceThreshold: new Decimal("60") })],
+      { ...threshold100, enabled: false },
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].inputs.threshold).toBe("60.00");
   });
 });
 

@@ -23,10 +23,13 @@ function checking(overrides: Partial<SimulationAccount> = {}): SimulationAccount
   return {
     id: "checking",
     name: "Compte courant",
+    type: "CHECKING",
     currency: "EUR",
     archived: false,
     recordedBalance: d("1000"),
     openingBalance: d("1000"),
+    floor: d("0"),
+    floorSource: "NONE",
     ...overrides,
   };
 }
@@ -53,7 +56,6 @@ function input(overrides: Partial<SimulationInput> = {}): SimulationInput {
     accounts: [checking()],
     months: keys.map((key) => month(key)),
     payments: [],
-    threshold: { enabled: true, amount: d("0"), currency: null },
     selectedCategory: null,
     recordedWindowTruncated: false,
     horizonCapped: false,
@@ -235,11 +237,17 @@ describe("simulateExpense", () => {
   it("distinguishes a pre-existing threshold breach from a new one", () => {
     const result = simulateExpense(
       input({
-        accounts: [checking({ recordedBalance: d("100"), openingBalance: d("100") })],
+        accounts: [
+          checking({
+            recordedBalance: d("100"),
+            openingBalance: d("100"),
+            floor: d("200"),
+            floorSource: "ACCOUNT",
+          }),
+        ],
         payments: [
           { accountId: "checking", amount: d("10"), date: date("2026-10-15"), label: null },
         ],
-        threshold: { enabled: true, amount: d("200"), currency: "EUR" },
       }),
     );
 
@@ -249,6 +257,158 @@ describe("simulateExpense", () => {
     expect(result.warnings.join(" ")).toContain("même sans ce scénario");
   });
 
+  it("suggests a split, using checking before savings", () => {
+    const result = simulateExpense(
+      input({
+        accounts: [
+          checking({ id: "checking", name: "Compte courant" }),
+          checking({
+            id: "savings",
+            name: "Livret",
+            type: "SAVINGS",
+            recordedBalance: d("5000"),
+            openingBalance: d("5000"),
+          }),
+        ],
+        payments: [
+          { accountId: null, amount: d("300"), date: date("2026-10-15"), label: null },
+        ],
+      }),
+    );
+
+    expect(result.payments[0]?.accountId).toBeNull();
+    expect(result.payments[0]?.accountName).toBe("Répartition suggérée");
+    expect(
+      result.payments[0]?.allocations.map((allocation) => [
+        allocation.accountId,
+        allocation.amount.toFixed(2),
+      ]),
+    ).toEqual([["checking", "300.00"]]);
+    expect(result.accounts.find((account) => account.id === "checking")?.paymentsTotal.toFixed(2)).toBe("300.00");
+  });
+
+  it("preserves the threshold floor when the split can, then uses the next account", () => {
+    const result = simulateExpense(
+      input({
+        accounts: [
+          checking({
+            id: "checking",
+            recordedBalance: d("1000"),
+            openingBalance: d("1000"),
+            floor: d("500"),
+            floorSource: "ACCOUNT",
+          }),
+          checking({
+            id: "savings",
+            name: "Livret",
+            type: "SAVINGS",
+            recordedBalance: d("5000"),
+            openingBalance: d("5000"),
+            floor: d("500"),
+            floorSource: "ACCOUNT",
+          }),
+        ],
+        payments: [
+          { accountId: null, amount: d("800"), date: date("2026-10-15"), label: null },
+        ],
+      }),
+    );
+
+    const allocations = result.payments[0]?.allocations ?? [];
+    expect(allocations.map((allocation) => [allocation.accountId, allocation.amount.toFixed(2)])).toEqual([
+      ["checking", "500.00"],
+      ["savings", "300.00"],
+    ]);
+    expect(allocations.every((allocation) => allocation.preservesFloor)).toBe(true);
+    expect(allocations[0]?.balanceAfter.toFixed(2)).toBe("500.00");
+    expect(allocations[1]?.balanceAfter.toFixed(2)).toBe("4700.00");
+  });
+
+  it("falls back below the floor only when no account can keep it", () => {
+    const result = simulateExpense(
+      input({
+        accounts: [
+          checking({
+            id: "checking",
+            recordedBalance: d("100"),
+            openingBalance: d("100"),
+            floor: d("500"),
+            floorSource: "ACCOUNT",
+          }),
+          checking({
+            id: "savings",
+            name: "Livret",
+            type: "SAVINGS",
+            recordedBalance: d("50"),
+            openingBalance: d("50"),
+            floor: d("500"),
+            floorSource: "ACCOUNT",
+          }),
+        ],
+        payments: [
+          { accountId: null, amount: d("120"), date: date("2026-10-15"), label: null },
+        ],
+      }),
+    );
+
+    const allocations = result.payments[0]?.allocations ?? [];
+    expect(allocations.map((allocation) => [allocation.accountId, allocation.amount.toFixed(2)])).toEqual([
+      ["checking", "100.00"],
+      ["savings", "20.00"],
+    ]);
+    expect(allocations.every((allocation) => allocation.preservesFloor)).toBe(false);
+    expect(result.warnings.join(" ")).toContain("ne maintient pas le seuil");
+  });
+
+  it("skips archived and unknown accounts when suggesting a split", () => {
+    const result = simulateExpense(
+      input({
+        accounts: [
+          checking(),
+          checking({
+            id: "unknown",
+            name: "Compte sans historique",
+            recordedBalance: null,
+            openingBalance: null,
+          }),
+          checking({
+            id: "archived",
+            name: "Ancien compte",
+            archived: true,
+            recordedBalance: d("5000"),
+            openingBalance: d("5000"),
+          }),
+        ],
+        payments: [
+          { accountId: null, amount: d("200"), date: date("2026-10-15"), label: null },
+        ],
+      }),
+    );
+
+    expect(result.payments[0]?.allocations.map((allocation) => allocation.accountId)).toEqual([
+      "checking",
+    ]);
+    expect(result.warnings.join(" ")).toContain("Comptes ignorés");
+  });
+
+  it("reports an amount that cannot be allocated when no account has a known balance", () => {
+    const result = simulateExpense(
+      input({
+        accounts: [
+          checking({ recordedBalance: null, openingBalance: null }),
+        ],
+        payments: [
+          { accountId: null, amount: d("100"), date: date("2026-10-15"), label: null },
+        ],
+      }),
+    );
+
+    expect(result.payments[0]?.allocations).toEqual([]);
+    expect(result.payments[0]?.unallocatedAmount.toFixed(2)).toBe("100.00");
+    expect(result.summary.verdict).toBe("unknown");
+    expect(result.warnings.join(" ")).toContain("reste non répartie");
+  });
+
   it("flags an account that becomes negative without an applicable threshold", () => {
     const result = simulateExpense(
       input({
@@ -256,27 +416,13 @@ describe("simulateExpense", () => {
         payments: [
           { accountId: "checking", amount: d("100"), date: date("2026-10-15"), label: null },
         ],
-        threshold: null,
       }),
     );
 
     expect(result.summary.verdict).toBe("breach");
-    expect(result.summary.threshold).toBeNull();
+    expect(result.accounts[0]?.floorSource).toBe("NONE");
+    expect(result.summary.thresholds.noneCount).toBe(1);
     expect(result.warnings.join(" ")).toContain("négatif");
-  });
-
-  it("never applies a threshold configured in another currency", () => {
-    const result = simulateExpense(
-      input({
-        payments: [
-          { accountId: "checking", amount: d("10"), date: date("2026-10-15"), label: null },
-        ],
-        threshold: { enabled: true, amount: d("500"), currency: "USD" },
-      }),
-    );
-
-    expect(result.summary.threshold).toBeNull();
-    expect(result.accounts[0]?.thresholdBreached).toBeNull();
   });
 
   it("computes the budget impact per month, including an overrun", () => {

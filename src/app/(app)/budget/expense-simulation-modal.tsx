@@ -50,10 +50,25 @@ function monthLabel(key: string): string {
   return formatMonthLabel(year, month);
 }
 
+type FloorSource = SerializedSimulationResult["accounts"][number]["floorSource"];
+
 function money(value: string | null, currency: Currency, empty = "—"): string {
   return value === null
     ? empty
     : formatMoney({ amount: new Decimal(value), currency });
+}
+
+function floorSourceLabel(source: FloorSource): string {
+  if (source === "ACCOUNT") {
+    return "Seuil configuré";
+  }
+  if (source === "GLOBAL") {
+    return "Règle globale";
+  }
+  if (source === "SUGGESTED") {
+    return "Seuil suggéré (1 mois de dépenses)";
+  }
+  return "Aucun seuil";
 }
 
 function dateLabel(value: string): string {
@@ -423,9 +438,7 @@ function SimulationForm({
 }) {
   const completePayments = payments.every(
     (payment) =>
-      payment.accountId !== "" &&
-      payment.amount.trim() !== "" &&
-      payment.operationDate !== "",
+      payment.amount.trim() !== "" && payment.operationDate !== "",
   );
   const canSubmit =
     !pending &&
@@ -502,7 +515,8 @@ function SimulationForm({
           <div>
             <h3 className="text-sm font-semibold">Paiements</h3>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Un seul paiement ou plusieurs échéances, dans le même scénario.
+              Un seul paiement ou plusieurs échéances. Sans compte choisi,
+              l&apos;application propose une répartition.
             </p>
           </div>
           <div className="text-right">
@@ -527,7 +541,7 @@ function SimulationForm({
               className="grid gap-3 rounded-md border border-zinc-200 p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] dark:border-zinc-800"
             >
               <Field
-                label={`Compte ${index + 1}`}
+                label={`Compte ${index + 1} (facultatif)`}
                 htmlFor={`payment-${index}-account`}
                 error={fieldError(result, `payments.${index}.accountId`)}
               >
@@ -538,9 +552,8 @@ function SimulationForm({
                   onChange={(event) =>
                     updatePayment(index, { accountId: event.target.value })
                   }
-                  required
                 >
-                  <option value="">Choisir un compte…</option>
+                  <option value="">Répartition automatique (suggérée)</option>
                   {currencyAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
                       {account.name}
@@ -652,7 +665,7 @@ function SimulationSummary({
 }) {
   const { summary } = simulation;
   const breach = summary.firstThresholdBreach;
-  const thresholdActive = summary.threshold !== null;
+  const hasAnyFloor = summary.thresholds.noneCount < summary.thresholds.accountCount;
   const currentMonthLabel = monthLabel(summary.currentMonthKey);
   const impactedAccounts = simulation.accounts.filter((account) =>
     new Decimal(account.paymentsTotal).greaterThan(0),
@@ -708,22 +721,16 @@ function SimulationSummary({
           }
         />
         <StatCard
-          label="Seuil de solde bas"
-          value={
-            thresholdActive && summary.threshold
-              ? money(summary.threshold.amount, simulation.currency)
-              : "Aucun seuil actif"
-          }
+          label="Seuils de sécurité"
+          value={hasAnyFloor ? "Par compte" : "Aucun seuil"}
           tone={breach ? "warning" : "neutral"}
-          hint={
-            !thresholdActive
-              ? "Un solde négatif reste signalé."
-              : breach
-                ? `${breach.causedByScenario ? "Franchi par ce scénario" : "Franchi même sans le scénario"} en ${monthLabel(
-                    breach.monthKey,
-                  )}`
-                : "Non franchi sur l'horizon."
-          }
+          hint={`${summary.thresholds.configuredCount} configuré${
+            summary.thresholds.configuredCount > 1 ? "s" : ""
+          } · ${summary.thresholds.suggestedCount} suggéré${
+            summary.thresholds.suggestedCount > 1 ? "s" : ""
+          } · ${summary.thresholds.globalCount} règle globale · ${
+            summary.thresholds.noneCount
+          } sans seuil · modifiables dans Comptes`}
         />
         <StatCard
           label="Comptes et paiements"
@@ -780,15 +787,34 @@ function SimulationSummary({
                 <td className={`${tdClass} whitespace-nowrap`}>
                   {dateLabel(payment.operationDate)}
                 </td>
-                <td className={tdClass}>{payment.accountName}</td>
+                <td className={tdClass}>
+                  {payment.accountId === null ? (
+                    <>
+                      <span className="font-medium">Répartition suggérée</span>
+                      <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                        {payment.allocations.length === 0
+                          ? "Aucun compte disponible"
+                          : `${payment.allocations.length} compte${
+                              payment.allocations.length > 1 ? "s" : ""
+                            }`}
+                      </span>
+                    </>
+                  ) : (
+                    payment.accountName
+                  )}
+                </td>
                 <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
                   {money(payment.amount, simulation.currency)}
                 </td>
                 <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
-                  {money(payment.accountCumulative, simulation.currency)}
+                  {payment.accountId === null
+                    ? "—"
+                    : money(payment.accountCumulative, simulation.currency)}
                 </td>
                 <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
-                  {money(payment.balanceAfter, simulation.currency, "Inconnu")}
+                  {payment.accountId === null
+                    ? "—"
+                    : money(payment.balanceAfter, simulation.currency, "Inconnu")}
                 </td>
                 <td className={tdClass}>
                   {payment.thresholdBreached === null ? (
@@ -806,6 +832,8 @@ function SimulationSummary({
           </tbody>
         </TableShell>
       </section>
+
+      <SuggestedAllocations simulation={simulation} />
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         <button
@@ -844,13 +872,9 @@ function VerdictBanner({ simulation }: { simulation: SerializedSimulationResult 
               : "Le seuil de solde bas est franchi même sans ce scénario."}
           </strong>{" "}
           Solde projeté : {money(breach.amount, simulation.currency)} sur «{" "}
-          {breach.accountName} » en {monthLabel(breach.monthKey)}.
-          {summary.threshold
-            ? ` Seuil configuré : ${money(
-                summary.threshold.amount,
-                summary.threshold.currency ?? simulation.currency,
-              )}.`
-            : ""}
+          {breach.accountName} » en {monthLabel(breach.monthKey)}.{" "}
+          {floorSourceLabel(breach.floorSource)} :{" "}
+          {money(breach.floor, simulation.currency)}.
         </Notice>
       );
     }
@@ -1009,7 +1033,9 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
                       {month.thresholdBreachCount} compte
                       {month.thresholdBreachCount > 1 ? "s" : ""}
                     </Badge>
-                  ) : summary.threshold && month.balanceAfterScenario !== null ? (
+                  ) : summary.thresholds.noneCount <
+                      summary.thresholds.accountCount &&
+                    month.balanceAfterScenario !== null ? (
                     <Badge tone="positive">OK</Badge>
                   ) : (
                     "—"
@@ -1027,7 +1053,8 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
         </h3>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           Le solde enregistré est la somme signée des opérations. Le point bas est le
-          minimum projeté sur tout l&apos;horizon.
+          minimum projeté sur tout l&apos;horizon. Le seuil se règle dans l&apos;onglet
+          Comptes ; à défaut, la simulation le suggère à partir des dépenses.
         </p>
 
         <div className="mt-3">
@@ -1089,14 +1116,20 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
                     ) : null}
                   </td>
                   <td className={tdClass}>
-                    {account.thresholdBreached === null ? (
-                      "—"
-                    ) : account.thresholdBreached ? (
-                      <div className="space-y-1">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {floorSourceLabel(account.floorSource)}
+                    </p>
+                    <p className="tabular-nums">
+                      {money(account.floor, simulation.currency)}
+                    </p>
+                    {account.thresholdBreached === null ? null : account.thresholdBreached ? (
+                      <div className="mt-1 space-y-1">
                         <Badge tone="warning">
-                          {account.thresholdCausedByScenario
-                            ? "Franchi par le scénario"
-                            : "Franchi aussi sans le scénario"}
+                          {account.floorSource === "NONE"
+                            ? "Passe négatif"
+                            : account.thresholdCausedByScenario
+                              ? "Franchi par le scénario"
+                              : "Franchi aussi sans le scénario"}
                         </Badge>
                         {account.firstBreachMonth ? (
                           <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -1105,7 +1138,11 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
                         ) : null}
                       </div>
                     ) : (
-                      <Badge tone="positive">OK</Badge>
+                      <div className="mt-1">
+                        <Badge tone="positive">
+                          {account.floorSource === "NONE" ? "Reste positif" : "Respecté"}
+                        </Badge>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -1114,6 +1151,8 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
           </TableShell>
         </div>
       </section>
+
+      <SuggestedAllocations simulation={simulation} detailed />
 
       <section>
         <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
@@ -1161,18 +1200,39 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
                   <td className={`${tdClass} whitespace-nowrap`}>
                     {dateLabel(payment.operationDate)}
                   </td>
-                  <td className={tdClass}>{payment.accountName}</td>
+                  <td className={tdClass}>
+                    {payment.accountId === null ? (
+                      <>
+                        <span className="font-medium">Répartition suggérée</span>
+                        <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                          {payment.allocations.length === 0
+                            ? "Aucun compte disponible"
+                            : `${payment.allocations.length} compte${
+                                payment.allocations.length > 1 ? "s" : ""
+                              }`}
+                        </span>
+                      </>
+                    ) : (
+                      payment.accountName
+                    )}
+                  </td>
                   <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
                     {money(payment.amount, simulation.currency)}
                   </td>
                   <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
-                    {money(payment.accountCumulative, simulation.currency)}
+                    {payment.accountId === null
+                      ? "—"
+                      : money(payment.accountCumulative, simulation.currency)}
                   </td>
                   <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
-                    {money(payment.balanceBefore, simulation.currency, "Inconnu")}
+                    {payment.accountId === null
+                      ? "—"
+                      : money(payment.balanceBefore, simulation.currency, "Inconnu")}
                   </td>
                   <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
-                    {money(payment.balanceAfter, simulation.currency, "Inconnu")}
+                    {payment.accountId === null
+                      ? "—"
+                      : money(payment.balanceAfter, simulation.currency, "Inconnu")}
                   </td>
                   <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
                     {money(payment.globalBalanceAfter, simulation.currency, "Inconnu")}
@@ -1315,12 +1375,170 @@ function DetailContent({ simulation }: { simulation: SerializedSimulationResult 
           </li>
           <li>
             Un compte sans opération a un solde inconnu, jamais zéro ; ses projections
-            restent vides.
+            restent vides et il est écarté de la répartition automatique.
+          </li>
+          <li>
+            La répartition suggérée privilégie les comptes courants, espèces et cartes,
+            puis les autres comptes, et l&apos;épargne en dernier ; à l&apos;intérieur
+            d&apos;une famille, le solde projeté le plus élevé d&apos;abord.
           </li>
           <li>Aucune devise n&apos;est convertie : le scénario reste dans une devise.</li>
         </ul>
       </section>
     </>
+  );
+}
+
+function SuggestedAllocations({
+  simulation,
+  detailed = false,
+}: {
+  simulation: SerializedSimulationResult;
+  detailed?: boolean;
+}) {
+  const autoPayments = simulation.payments.filter(
+    (payment) => payment.accountId === null,
+  );
+  if (autoPayments.length === 0) {
+    return null;
+  }
+
+  const missing = autoPayments.filter((payment) => payment.allocations.length === 0);
+  const partiallyUnallocated = autoPayments.filter(
+    (payment) =>
+      payment.allocations.length > 0 &&
+      new Decimal(payment.unallocatedAmount).greaterThan(0),
+  );
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Répartition suggérée
+      </h3>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        Les comptes courants, espèces et cartes sont utilisés avant les autres
+        comptes, et l&apos;épargne en dernier. À l&apos;intérieur d&apos;une même
+        famille, le solde projeté le plus élevé passe d&apos;abord. Chaque compte
+        garde son propre seuil : configuré, règle globale ou suggestion d&apos;un mois
+        de dépenses.
+      </p>
+
+      {autoPayments.some((payment) => payment.allocations.length > 0) ? (
+        <div className="mt-3">
+          <TableShell caption="Répartition suggérée par paiement">
+            <thead>
+              <tr>
+                <th scope="col" className={thClass}>
+                  Paiement
+                </th>
+                <th scope="col" className={thClass}>
+                  Compte
+                </th>
+                <th scope="col" className={`${thClass} text-right`}>
+                  Montant alloué
+                </th>
+                {detailed ? (
+                  <th scope="col" className={`${thClass} text-right`}>
+                    Solde avant
+                  </th>
+                ) : null}
+                <th scope="col" className={`${thClass} text-right`}>
+                  Solde après
+                </th>
+                <th scope="col" className={thClass}>
+                  Seuil
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {autoPayments.flatMap((payment) =>
+                payment.allocations.map((allocation) => (
+                  <tr key={`${payment.index}-${allocation.accountId}`}>
+                    <td className={`${tdClass} whitespace-nowrap`}>
+                      {dateLabel(payment.operationDate)}
+                      <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                        {money(payment.amount, simulation.currency)}
+                      </span>
+                    </td>
+                    <td className={tdClass}>{allocation.accountName}</td>
+                    <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
+                      {money(allocation.amount, simulation.currency)}
+                    </td>
+                    {detailed ? (
+                      <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
+                        {money(allocation.balanceBefore, simulation.currency)}
+                      </td>
+                    ) : null}
+                    <td className={`${tdClass} whitespace-nowrap text-right tabular-nums`}>
+                      {money(allocation.balanceAfter, simulation.currency)}
+                    </td>
+                    <td className={tdClass}>
+                      <AllocationBadge allocation={allocation} />
+                      <span className="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">
+                        {floorSourceLabel(allocation.floorSource)} ·{" "}
+                        {money(allocation.floor, simulation.currency)}
+                      </span>
+                    </td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </TableShell>
+        </div>
+      ) : null}
+
+      {missing.length > 0 ? (
+        <div className="mt-3">
+          <Notice tone="warning">
+            Aucun compte actif avec un solde connu ne peut recevoir{" "}
+            {missing
+              .map((payment) => money(payment.amount, simulation.currency))
+              .join(", ")}
+            . Le solde global tient compte de ce montant, mais aucun compte ne le
+            porte. Choisissez un compte pour ce paiement ou enregistrez d&apos;abord
+            une opération sur un compte.
+          </Notice>
+        </div>
+      ) : null}
+
+      {partiallyUnallocated.map((payment) => (
+        <div key={`partial-${payment.index}`} className="mt-3">
+          <Notice tone="warning">
+            Une partie du paiement du {dateLabel(payment.operationDate)} reste non
+            répartie :{" "}
+            {money(payment.unallocatedAmount, simulation.currency)} sur{" "}
+            {money(payment.amount, simulation.currency)}.
+          </Notice>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function AllocationBadge({
+  allocation,
+}: {
+  allocation: SerializedSimulationResult["payments"][number]["allocations"][number];
+}) {
+  if (allocation.floorSource === "NONE") {
+    return allocation.preservesFloor ? (
+      <Badge tone="positive">Reste positif</Badge>
+    ) : (
+      <Badge tone="warning">Passe négatif</Badge>
+    );
+  }
+
+  const label =
+    allocation.floorSource === "SUGGESTED"
+      ? "Seuil suggéré"
+      : allocation.floorSource === "GLOBAL"
+        ? "Seuil global"
+        : "Seuil";
+
+  return allocation.thresholdBreached ? (
+    <Badge tone="warning">{label} non préservé</Badge>
+  ) : (
+    <Badge tone="positive">{label} préservé</Badge>
   );
 }
 

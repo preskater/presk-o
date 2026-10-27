@@ -1278,6 +1278,7 @@ describe("updateAccountAction", () => {
       name: "Compte principal",
       type: "CHECKING",
       currency: "EUR",
+      lowBalanceThreshold: null,
     });
   });
 

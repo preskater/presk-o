@@ -113,6 +113,7 @@ export async function createAccountAction(values: unknown): Promise<ActionResult
       name: parsed.data.name,
       type: parsed.data.type,
       currency: parsed.data.currency,
+      lowBalanceThreshold: parsed.data.lowBalanceThreshold,
     });
   } catch (error) {
     return unexpectedResult("createAccount", error);
@@ -759,6 +760,7 @@ export async function updateAccountAction(values: unknown): Promise<ActionResult
       name: input.name,
       type: input.type,
       currency: input.currency,
+      lowBalanceThreshold: input.lowBalanceThreshold,
     });
 
     if (!updated) {

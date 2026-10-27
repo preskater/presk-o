@@ -9,6 +9,7 @@ import {
   toDateOnlyString,
 } from "@/lib/dates";
 import type { Currency } from "@/lib/money";
+import type { AccountType } from "./domain";
 import {
   amount,
   currencyCode,
@@ -53,7 +54,8 @@ export const HORIZON_MAXIMUM_MONTHS = 24;
 export const HORIZON_AFTER_LAST_PAYMENT_MONTHS = 3;
 
 export const expenseSimulationPaymentSchema = z.object({
-  accountId: z.string().trim().min(1, "Un compte est requis."),
+  /** Null (or an empty select) asks the engine to suggest a split. */
+  accountId: optionalId,
   amount,
   operationDate: requiredDate,
 });
@@ -72,16 +74,21 @@ export type ValidatedExpenseSimulationInput = z.output<typeof expenseSimulationS
 
 export type SimulationVerdict = "safe" | "breach" | "negative" | "unknown";
 export type BudgetImpactStatus = "ok" | "warning" | "overrun" | "none";
+export type SimulationFloorSource = "ACCOUNT" | "GLOBAL" | "SUGGESTED" | "NONE";
 
 export type SimulationAccount = {
   id: string;
   name: string;
+  type: AccountType;
   currency: Currency;
   archived: boolean;
   /** All-time recorded signed sum; null when the account holds no operation. */
   recordedBalance: Decimal | null;
   /** Signed sum strictly before the horizon; null when the balance is unknown. */
   openingBalance: Decimal | null;
+  /** Minimum projected balance used for this account. */
+  floor: Decimal;
+  floorSource: SimulationFloorSource;
 };
 
 export type SimulationRecordedMovement = {
@@ -102,7 +109,8 @@ export type SimulationForecastMovement = {
 };
 
 export type SimulationPayment = {
-  accountId: string;
+  /** Null asks for a suggested split across the eligible accounts. */
+  accountId: string | null;
   amount: Decimal;
   date: Date;
   label: string | null;
@@ -124,29 +132,36 @@ export type SimulationMonthInput = {
   budgets: readonly SimulationBudgetInput[];
 };
 
-export type SimulationThreshold = {
-  enabled: boolean;
-  amount: Decimal;
-  /** Null means the rule applies to every currency. */
-  currency: Currency | null;
-};
-
 export type SimulationInput = {
   currency: Currency;
   currentMonthKey: string;
   accounts: readonly SimulationAccount[];
   months: readonly SimulationMonthInput[];
   payments: readonly SimulationPayment[];
-  threshold: SimulationThreshold | null;
   selectedCategory: { id: string; name: string } | null;
   recordedWindowTruncated: boolean;
   horizonCapped: boolean;
   forecastWarnings: readonly string[];
 };
 
+export type SimulationAllocation = {
+  accountId: string;
+  accountName: string;
+  amount: Decimal;
+  balanceBefore: Decimal;
+  balanceAfter: Decimal;
+  /** Minimum balance the split tries to preserve. */
+  floor: Decimal;
+  floorSource: SimulationFloorSource;
+  preservesFloor: boolean;
+  thresholdBreached: boolean;
+  thresholdCausedByScenario: boolean;
+};
+
 export type SimulationPaymentResult = {
   index: number;
-  accountId: string;
+  /** Null when the engine was asked to suggest the split. */
+  accountId: string | null;
   accountName: string;
   currency: Currency;
   amount: Decimal;
@@ -157,6 +172,9 @@ export type SimulationPaymentResult = {
   accountCumulative: Decimal;
   thresholdBreached: boolean | null;
   thresholdCausedByScenario: boolean;
+  allocations: SimulationAllocation[];
+  /** Amount no account could receive (no eligible account with a known balance). */
+  unallocatedAmount: Decimal;
 };
 
 export type SimulationMonthResult = {
@@ -184,6 +202,8 @@ export type SimulationAccountResult = {
   archived: boolean;
   recordedBalance: Decimal | null;
   paymentsTotal: Decimal;
+  floor: Decimal;
+  floorSource: SimulationFloorSource;
   currentMonthEndBefore: Decimal | null;
   currentMonthEndAfter: Decimal | null;
   lowestAfter: Decimal | null;
@@ -198,6 +218,8 @@ export type SimulationThresholdBreach = {
   accountName: string;
   monthKey: string;
   amount: Decimal;
+  floor: Decimal;
+  floorSource: SimulationFloorSource;
   causedByScenario: boolean;
 };
 
@@ -219,7 +241,13 @@ export type SimulationSummary = {
   } | null;
   firstThresholdBreach: SimulationThresholdBreach | null;
   globalNegativeMonth: string | null;
-  threshold: { amount: Decimal; currency: Currency | null } | null;
+  thresholds: {
+    accountCount: number;
+    configuredCount: number;
+    globalCount: number;
+    suggestedCount: number;
+    noneCount: number;
+  };
 };
 
 export type SimulationBudgetRow = {
@@ -304,7 +332,7 @@ function monthEnd(key: string): Date {
   return new Date(monthRange(year, month).end.getTime() - 1);
 }
 
-function sortRank(kind: "recorded" | "forecast" | "payment"): number {
+function sortRank(kind: "recorded" | "forecast" | "payment" | "auto-payment"): number {
   return kind === "recorded" ? 0 : kind === "forecast" ? 1 : 2;
 }
 
@@ -325,6 +353,12 @@ type TimelineEvent =
       kind: "payment";
       date: Date;
       accountId: string;
+      amount: Decimal;
+      index: number;
+    }
+  | {
+      kind: "auto-payment";
+      date: Date;
       amount: Decimal;
       index: number;
     };
@@ -363,12 +397,12 @@ function trackLowest(
 function trackBreach(
   state: AccountState,
   balance: Decimal | null,
-  threshold: Decimal | null,
+  threshold: Decimal,
   key: string,
   time: number,
   target: "with" | "without",
 ): void {
-  if (balance === null || threshold === null || !balance.lessThan(threshold)) {
+  if (balance === null || !balance.lessThan(threshold)) {
     return;
   }
 
@@ -381,6 +415,143 @@ function trackBreach(
 }
 
 /**
+ * Where a suggested split looks first.
+ *
+ * Day-to-day money (checking, cash, card) is used before other accounts, and
+ * savings come last. Within one family the account with the largest projected
+ * balance above the floor gives first. The order is deliberate and stable: the
+ * same rows always produce the same suggestion.
+ */
+const ACCOUNT_ALLOCATION_RANK: Record<AccountType, number> = {
+  CHECKING: 0,
+  CASH: 1,
+  CREDIT_CARD: 2,
+  OTHER: 3,
+  SAVINGS: 4,
+};
+
+type AllocationPlan = {
+  allocations: SimulationAllocation[];
+  /** Amount left over when no active account has a known balance. */
+  unallocated: Decimal;
+  /** Active accounts skipped because their balance is unknown. */
+  skippedUnknown: SimulationAccount[];
+};
+
+/**
+ * Suggests which accounts provide one unassigned payment.
+ *
+ * Two passes protect each account's own floor — its configured threshold, the
+ * global rule, or the suggested one: first take only what sits above it, then
+ * take what remains positive. A last pass places the remainder on the highest
+ * projected account when even that is not enough, so the suggestion always
+ * covers the amount while saying, through `preservesFloor`, that the cushion
+ * cannot be kept.
+ */
+function planAllocation(input: {
+  amount: Decimal;
+  states: Map<string, AccountState>;
+}): AllocationPlan {
+  const eligible = [...input.states.values()]
+    .filter(
+      (state) => !state.account.archived && state.withScenario !== null,
+    )
+    .sort(
+      (left, right) =>
+        ACCOUNT_ALLOCATION_RANK[left.account.type] -
+          ACCOUNT_ALLOCATION_RANK[right.account.type] ||
+        right.withScenario!.comparedTo(left.withScenario!) ||
+        left.account.name.localeCompare(right.account.name),
+    );
+  const skippedUnknown = [...input.states.values()]
+    .filter(
+      (state) => !state.account.archived && state.withScenario === null,
+    )
+    .map((state) => state.account)
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  const balances = new Map<string, Decimal>();
+  for (const state of eligible) {
+    balances.set(state.account.id, state.withScenario!);
+  }
+
+  const allocations = new Map<string, Decimal>();
+  let remaining = input.amount;
+
+  const take = (accountId: string, available: Decimal): void => {
+    if (!available.greaterThan(0) || !remaining.greaterThan(0)) {
+      return;
+    }
+    const amount = remaining.lessThan(available) ? remaining : available;
+    allocations.set(accountId, (allocations.get(accountId) ?? new Decimal(0)).plus(amount));
+    balances.set(accountId, balances.get(accountId)!.minus(amount));
+    remaining = remaining.minus(amount);
+  };
+
+  if (remaining.greaterThan(0)) {
+    for (const state of eligible) {
+      take(
+        state.account.id,
+        balances.get(state.account.id)!.minus(state.account.floor),
+      );
+    }
+  }
+
+  if (remaining.greaterThan(0)) {
+    for (const state of eligible) {
+      take(state.account.id, balances.get(state.account.id)!);
+    }
+  }
+
+  if (remaining.greaterThan(0) && eligible.length > 0) {
+    const [fallback] = [...eligible].sort(
+      (left, right) =>
+        balances.get(right.account.id)!.comparedTo(balances.get(left.account.id)!) ||
+        left.account.name.localeCompare(right.account.name),
+    );
+    const accountId = fallback.account.id;
+    allocations.set(
+      accountId,
+      (allocations.get(accountId) ?? new Decimal(0)).plus(remaining),
+    );
+    balances.set(accountId, balances.get(accountId)!.minus(remaining));
+    remaining = new Decimal(0);
+  }
+
+  return {
+    allocations: eligible.flatMap((state) => {
+      const amount = allocations.get(state.account.id);
+      if (!amount) {
+        return [];
+      }
+
+      const balanceBefore = state.withScenario!;
+      const balanceAfter = balances.get(state.account.id)!;
+      const floor = state.account.floor;
+      const breachedBefore = balanceBefore.lessThan(floor);
+
+      return [
+        {
+          accountId: state.account.id,
+          accountName: state.account.name,
+          amount,
+          balanceBefore,
+          balanceAfter,
+          floor,
+          floorSource: state.account.floorSource,
+          preservesFloor: balanceAfter.greaterThanOrEqualTo(floor),
+          thresholdBreached: balanceAfter.lessThan(floor),
+          thresholdCausedByScenario:
+            !breachedBefore && balanceAfter.lessThan(floor),
+        },
+      ];
+    }),
+    unallocated: remaining,
+    skippedUnknown,
+  };
+}
+
+/**
  * The scenario, from recorded rows, forecasts and the payments the owner typed.
  *
  * Pure: every amount and every date is handed in, so the same inputs always
@@ -388,13 +559,11 @@ function trackBreach(
  */
 export function simulateExpense(input: SimulationInput): SimulationResult {
   const accountById = new Map(input.accounts.map((account) => [account.id, account]));
-  const thresholdAmount =
-    input.threshold?.enabled &&
-    (input.threshold.currency === null || input.threshold.currency === input.currency)
-      ? input.threshold.amount
-      : null;
 
   for (const payment of input.payments) {
+    if (payment.accountId === null) {
+      continue;
+    }
     const account = accountById.get(payment.accountId);
     if (!account) {
       throw new Error("Simulation account is not available.");
@@ -424,8 +593,7 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
     }
     const alreadyBelow =
       account.openingBalance !== null &&
-      thresholdAmount !== null &&
-      account.openingBalance.lessThan(thresholdAmount);
+      account.openingBalance.lessThan(account.floor);
     states.set(account.id, {
       account,
       withScenario: account.openingBalance,
@@ -455,6 +623,9 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
   const paymentResults: SimulationPaymentResult[] = [];
   const cumulativeByAccount = new Map<string, Decimal>();
   const monthResults: SimulationMonthResult[] = [];
+  const skippedUnknown = new Set<string>();
+  const allocationShortfalls = new Set<string>();
+  let unallocatedTotal = new Decimal(0);
 
   for (const month of input.months) {
     const events: TimelineEvent[] = [
@@ -470,13 +641,22 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
         accountId: movement.accountId,
         amount: movement.amount,
       })),
-      ...(paymentsByMonth.get(month.key) ?? []).map(({ payment, index }) => ({
-        kind: "payment" as const,
-        date: payment.date,
-        accountId: payment.accountId,
-        amount: payment.amount.negated(),
-        index,
-      })),
+      ...(paymentsByMonth.get(month.key) ?? []).map(({ payment, index }) =>
+        payment.accountId === null
+          ? {
+              kind: "auto-payment" as const,
+              date: payment.date,
+              amount: payment.amount,
+              index,
+            }
+          : {
+              kind: "payment" as const,
+              date: payment.date,
+              accountId: payment.accountId,
+              amount: payment.amount.negated(),
+              index,
+            },
+      ),
     ].sort(
       (left, right) =>
         left.date.getTime() - right.date.getTime() ||
@@ -504,7 +684,7 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
           trackBreach(
             state,
             state.withScenario,
-            thresholdAmount,
+            state.account.floor,
             month.key,
             event.date.getTime(),
             "with",
@@ -512,7 +692,7 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
           trackBreach(
             state,
             state.withoutScenario,
-            thresholdAmount,
+            state.account.floor,
             month.key,
             event.date.getTime(),
             "without",
@@ -540,7 +720,7 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
             trackBreach(
               state,
               state.withScenario,
-              thresholdAmount,
+              state.account.floor,
               month.key,
               event.date.getTime(),
               "with",
@@ -548,7 +728,7 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
             trackBreach(
               state,
               state.withoutScenario,
-              thresholdAmount,
+              state.account.floor,
               month.key,
               event.date.getTime(),
               "without",
@@ -560,6 +740,69 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
         continue;
       }
 
+      if (event.kind === "auto-payment") {
+        paymentCount += 1;
+        simulatedExpense = simulatedExpense.plus(event.amount);
+        const plan = planAllocation({
+          amount: event.amount,
+          states,
+        });
+
+        for (const account of plan.skippedUnknown) {
+          skippedUnknown.add(account.name);
+        }
+
+        for (const allocation of plan.allocations) {
+          if (!allocation.preservesFloor) {
+            allocationShortfalls.add(allocation.accountName);
+          }
+          const state = states.get(allocation.accountId);
+          if (!state || state.withScenario === null) {
+            continue;
+          }
+          state.withScenario = allocation.balanceAfter;
+          globalWith = addKnown(globalWith, allocation.amount.negated());
+          cumulativeByAccount.set(
+            allocation.accountId,
+            (cumulativeByAccount.get(allocation.accountId) ?? new Decimal(0)).plus(
+              allocation.amount,
+            ),
+          );
+          trackLowest(state, state.withScenario, month.key);
+          trackBreach(
+            state,
+            state.withScenario,
+            state.account.floor,
+            month.key,
+            event.date.getTime(),
+            "with",
+          );
+        }
+
+        if (plan.unallocated.greaterThan(0)) {
+          unallocatedTotal = unallocatedTotal.plus(plan.unallocated);
+          globalWith = addKnown(globalWith, plan.unallocated.negated());
+        }
+
+        paymentResults.push({
+          index: event.index,
+          accountId: null,
+          accountName: "Répartition suggérée",
+          currency: input.currency,
+          amount: event.amount,
+          operationDate: event.date,
+          balanceBefore: null,
+          balanceAfter: null,
+          globalBalanceAfter: globalWith,
+          accountCumulative: new Decimal(0),
+          thresholdBreached: null,
+          thresholdCausedByScenario: false,
+          allocations: plan.allocations,
+          unallocatedAmount: plan.unallocated,
+        });
+        continue;
+      }
+
       const state = states.get(event.accountId);
       const account = accountById.get(event.accountId);
       if (!state || !account) {
@@ -567,10 +810,9 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       }
 
       const balanceBefore = state.withScenario;
+      const floor = account.floor;
       const balanceBeforeBreached =
-        balanceBefore !== null &&
-        thresholdAmount !== null &&
-        balanceBefore.lessThan(thresholdAmount);
+        balanceBefore !== null && balanceBefore.lessThan(floor);
 
       paymentCount += 1;
       simulatedExpense = simulatedExpense.plus(event.amount.abs());
@@ -584,16 +826,14 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       trackBreach(
         state,
         state.withScenario,
-        thresholdAmount,
+        floor,
         month.key,
         event.date.getTime(),
         "with",
       );
 
       const balanceAfterBreached =
-        state.withScenario !== null &&
-        thresholdAmount !== null &&
-        state.withScenario.lessThan(thresholdAmount);
+        state.withScenario !== null && state.withScenario.lessThan(floor);
 
       paymentResults.push({
         index: event.index,
@@ -607,10 +847,27 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
         globalBalanceAfter: globalWith,
         accountCumulative: cumulativeByAccount.get(event.accountId) ?? new Decimal(0),
         thresholdBreached:
-          thresholdAmount === null || state.withScenario === null
-            ? null
-            : balanceAfterBreached,
+          state.withScenario === null ? null : balanceAfterBreached,
         thresholdCausedByScenario: !balanceBeforeBreached && balanceAfterBreached,
+        allocations:
+          balanceBefore !== null && state.withScenario !== null
+            ? [
+                {
+                  accountId: event.accountId,
+                  accountName: account.name,
+                  amount: event.amount.abs(),
+                  balanceBefore,
+                  balanceAfter: state.withScenario,
+                  floor,
+                  floorSource: account.floorSource,
+                  preservesFloor: state.withScenario.greaterThanOrEqualTo(floor),
+                  thresholdBreached: balanceAfterBreached,
+                  thresholdCausedByScenario:
+                    !balanceBeforeBreached && balanceAfterBreached,
+                },
+              ]
+            : [],
+        unallocatedAmount: new Decimal(0),
       });
     }
 
@@ -621,20 +878,19 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       state.endOfMonthWith.set(month.key, state.withScenario);
       state.endOfMonthWithout.set(month.key, state.withoutScenario);
       trackLowest(state, state.withScenario, month.key);
-      trackBreach(state, state.withScenario, thresholdAmount, month.key, endTime, "with");
+      trackBreach(state, state.withScenario, state.account.floor, month.key, endTime, "with");
       trackBreach(
         state,
         state.withoutScenario,
-        thresholdAmount,
+        state.account.floor,
         month.key,
         endTime,
         "without",
       );
 
       if (
-        thresholdAmount !== null &&
         state.withScenario !== null &&
-        state.withScenario.lessThan(thresholdAmount)
+        state.withScenario.lessThan(state.account.floor)
       ) {
         thresholdBreachCount += 1;
       }
@@ -684,14 +940,14 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       archived: account.archived,
       recordedBalance: account.recordedBalance,
       paymentsTotal: cumulativeByAccount.get(account.id) ?? new Decimal(0),
+      floor: account.floor,
+      floorSource: account.floorSource,
       currentMonthEndBefore: state?.endOfMonthWithout.get(input.currentMonthKey) ?? null,
       currentMonthEndAfter: state?.endOfMonthWith.get(input.currentMonthKey) ?? null,
       lowestAfter: state?.lowestWith ?? null,
       lowestMonth: state?.lowestMonth ?? null,
       thresholdBreached:
-        account.openingBalance === null || thresholdAmount === null
-          ? null
-          : firstBreach !== null,
+        account.openingBalance === null ? null : firstBreach !== null,
       thresholdCausedByScenario: causedByScenario,
       firstBreachMonth: firstBreach?.monthKey ?? null,
     };
@@ -721,6 +977,8 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
           accountName: breachCandidates[0].account.name,
           monthKey: breachCandidates[0].breach.monthKey,
           amount: breachCandidates[0].breach.amount,
+          floor: breachCandidates[0].account.floor,
+          floorSource: breachCandidates[0].account.floorSource,
           causedByScenario:
             breachCandidates[0].without === null ||
             breachCandidates[0].breach.time < breachCandidates[0].without.time,
@@ -787,10 +1045,21 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       : null,
     firstThresholdBreach,
     globalNegativeMonth,
-    threshold:
-      input.threshold?.enabled && thresholdAmount !== null
-        ? { amount: input.threshold.amount, currency: input.threshold.currency }
-        : null,
+    thresholds: {
+      accountCount: input.accounts.length,
+      configuredCount: input.accounts.filter(
+        (account) => account.floorSource === "ACCOUNT",
+      ).length,
+      globalCount: input.accounts.filter(
+        (account) => account.floorSource === "GLOBAL",
+      ).length,
+      suggestedCount: input.accounts.filter(
+        (account) => account.floorSource === "SUGGESTED",
+      ).length,
+      noneCount: input.accounts.filter(
+        (account) => account.floorSource === "NONE",
+      ).length,
+    },
   };
 
   const warnings = new Set<string>(input.forecastWarnings);
@@ -812,11 +1081,14 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
       `Le seuil de solde bas est franchi même sans ce scénario (premier mois : ${monthLabelOf(firstThresholdBreach.monthKey)}). La dépense peut aggraver la situation, mais elle ne crée pas ce franchissement.`,
     );
   }
-  if (negativeAccounts.length > 0 && thresholdAmount === null) {
+  const negativeWithoutFloor = negativeAccounts.filter(
+    (account) => account.floorSource === "NONE",
+  );
+  if (negativeWithoutFloor.length > 0) {
     warnings.add(
-      `Au moins un compte devient négatif sur l'horizon (${negativeAccounts
+      `Au moins un compte devient négatif sur l'horizon (${negativeWithoutFloor
         .map((account) => account.name)
-        .join(", ")}), alors qu'aucun seuil de solde bas ne s'applique à cette devise.`,
+        .join(", ")}), sans seuil de solde bas configuré ni suggéré.`,
     );
   }
   if (input.horizonCapped) {
@@ -827,6 +1099,27 @@ export function simulateExpense(input: SimulationInput): SimulationResult {
   if (recordedBalance === null) {
     warnings.add(
       "Aucune opération n'est enregistrée dans cette devise : le solde de départ est inconnu et aucune projection chiffrée n'est possible.",
+    );
+  }
+  if (skippedUnknown.size > 0) {
+    warnings.add(
+      `Comptes ignorés par la répartition automatique car leur solde est inconnu : ${[...skippedUnknown].join(
+        ", ",
+      )}.`,
+    );
+  }
+  if (allocationShortfalls.size > 0) {
+    warnings.add(
+      `La répartition suggérée ne maintient pas le seuil de solde bas sur : ${[
+        ...allocationShortfalls,
+      ].join(", ")}.`,
+    );
+  }
+  if (unallocatedTotal.greaterThan(0)) {
+    warnings.add(
+      `Aucun compte actif avec un solde connu ne peut recevoir ${unallocatedTotal.toFixed(
+        2,
+      )} ${input.currency} : cette part reste non répartie.`,
     );
   }
 

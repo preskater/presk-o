@@ -1,7 +1,14 @@
 import Decimal from "decimal.js";
-import { currentMonthKey, monthRange, parseMonthKey, toDateOnlyString } from "@/lib/dates";
+import {
+  currentMonthKey,
+  monthRange,
+  parseMonthKey,
+  shiftMonthKey,
+  toDateOnlyString,
+} from "@/lib/dates";
 import { resolveAlertRules } from "@/modules/alerts/domain";
 import { listAlertRules } from "@/modules/alerts/repository";
+import { resolveAccountFloor, suggestAccountFloor } from "./account-threshold";
 import { plannedOccurrences } from "./recurrence";
 import {
   findCategory,
@@ -15,6 +22,7 @@ import {
   listSalaryRates,
   listTransactionsForSeries,
   listWorkDays,
+  sumExpensesByAccount,
   sumTransactionsByAccount,
 } from "./repository";
 import {
@@ -34,7 +42,6 @@ import {
   type SimulationPayment,
   type SimulationRecordedMovement,
   type SimulationResult,
-  type SimulationThreshold,
   type ValidatedExpenseSimulationInput,
 } from "./simulation";
 
@@ -107,6 +114,10 @@ export async function runExpenseSimulation(input: {
       );
     }
 
+    if (payment.accountId === null) {
+      continue;
+    }
+
     const account = selectableAccounts.get(payment.accountId);
     if (!account) {
       return failure(
@@ -120,6 +131,19 @@ export async function runExpenseSimulation(input: {
         `Le compte « ${account.name} » n'est pas dans la devise du scénario.`,
       );
     }
+  }
+
+  const activeCurrencyAccounts = [...selectableAccounts.values()].filter(
+    (account) => account.currency === values.currency,
+  );
+  if (
+    values.payments.some((payment) => payment.accountId === null) &&
+    activeCurrencyAccounts.length === 0
+  ) {
+    return failure(
+      "payments",
+      `Aucun compte actif en ${values.currency} : impossible de proposer une répartition. Choisissez une autre devise ou créez un compte.`,
+    );
   }
 
   const horizon = simulationMonthKeys(
@@ -143,9 +167,17 @@ export async function runExpenseSimulation(input: {
   const start = monthRange(firstMonth.year, firstMonth.month).start;
   const end = monthRange(lastMonth.year, lastMonth.month).end;
   const currentKey = currentMonthKey(now);
+  const currentParsed = parseMonthKey(currentKey);
+  const currentMonthStart = monthRange(currentParsed.year, currentParsed.month).start;
+  const historyStartParsed = parseMonthKey(shiftMonthKey(currentKey, -3));
+  const historyStart = monthRange(
+    historyStartParsed.year,
+    historyStartParsed.month,
+  ).start;
 
   const [
     balances,
+    expenseHistory,
     openingTotals,
     recordedWindow,
     entries,
@@ -158,6 +190,10 @@ export async function runExpenseSimulation(input: {
     budgetMonths,
   ] = await Promise.all([
     listAccountBalanceTotals(input.workspaceId),
+    sumExpensesByAccount(input.workspaceId, {
+      from: historyStart,
+      to: currentMonthStart,
+    }),
     sumTransactionsByAccount(input.workspaceId, { before: start }),
     listTransactionsForSeries(input.workspaceId, { from: start, to: end }),
     listRecurringEntries(input.workspaceId),
@@ -195,33 +231,9 @@ export async function runExpenseSimulation(input: {
   );
   const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
 
-  const accounts: SimulationAccount[] = allAccounts
-    .filter((account) => account.currency === values.currency)
-    .map((account) => {
-      const total = balanceById.get(account.id);
-      const known = (total?.transactionCount ?? 0) > 0;
-      const opening = openingById.get(account.id);
-
-      return {
-        id: account.id,
-        name: account.name,
-        currency: account.currency,
-        archived: account.archivedAt !== null,
-        recordedBalance: known ? total!.balance : null,
-        openingBalance: known ? opening?.balance ?? new Decimal(0) : null,
-      };
-    });
-
   const rules = resolveAlertRules(ruleRows);
   const lowBalance = rules.find((rule) => rule.kind === "LOW_BALANCE");
   const budgetThreshold = rules.find((rule) => rule.kind === "BUDGET_THRESHOLD");
-  const threshold: SimulationThreshold | null = lowBalance?.enabled
-    ? {
-        enabled: true,
-        amount: lowBalance.thresholdAmount ?? new Decimal(0),
-        currency: lowBalance.thresholdCurrency,
-      }
-    : null;
   const budgetThresholdPercent =
     budgetThreshold?.enabled === true
       ? budgetThreshold.thresholdPercent ?? new Decimal(80)
@@ -359,6 +371,59 @@ export async function runExpenseSimulation(input: {
     label: values.label,
   }));
 
+  const currentMonthPlan = months.find((month) => month.key === currentKey);
+  const pendingExpensesByAccount = new Map<string, Decimal>();
+  for (const movement of currentMonthPlan?.forecast ?? []) {
+    if (movement.accountId && movement.amount.isNegative()) {
+      pendingExpensesByAccount.set(
+        movement.accountId,
+        (pendingExpensesByAccount.get(movement.accountId) ?? new Decimal(0)).plus(
+          movement.amount.abs(),
+        ),
+      );
+    }
+  }
+
+  const accounts: SimulationAccount[] = allAccounts
+    .filter((account) => account.currency === values.currency)
+    .map((account) => {
+      const total = balanceById.get(account.id);
+      const known = (total?.transactionCount ?? 0) > 0;
+      const opening = openingById.get(account.id);
+
+      const suggested = suggestAccountFloor({
+        expensesLastThreeMonths:
+          expenseHistory.get(account.id) ?? new Decimal(0),
+        pendingExpenses:
+          pendingExpensesByAccount.get(account.id) ?? new Decimal(0),
+      });
+      const globalThreshold =
+        lowBalance?.enabled &&
+        lowBalance.thresholdAmount !== null &&
+        lowBalance.thresholdAmount.greaterThan(0) &&
+        (lowBalance.thresholdCurrency === null ||
+          lowBalance.thresholdCurrency === account.currency)
+          ? lowBalance.thresholdAmount
+          : null;
+      const { floor, source: floorSource } = resolveAccountFloor({
+        configured: account.lowBalanceThreshold,
+        global: globalThreshold,
+        suggested,
+      });
+
+      return {
+        id: account.id,
+        name: account.name,
+        type: account.type,
+        currency: account.currency,
+        archived: account.archivedAt !== null,
+        recordedBalance: known ? total!.balance : null,
+        openingBalance: known ? opening?.balance ?? new Decimal(0) : null,
+        floor,
+        floorSource,
+      };
+    });
+
   const hasForecast = months.some((month) => month.forecast.length > 0);
   const forecastWarnings: string[] = [];
   if (!hasForecast) {
@@ -385,7 +450,6 @@ export async function runExpenseSimulation(input: {
     accounts,
     months,
     payments,
-    threshold,
     selectedCategory: category
       ? { id: category.id, name: category.name }
       : null,
