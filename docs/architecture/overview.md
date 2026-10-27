@@ -405,9 +405,13 @@ asked for: a cascade here would silently change what a property is worth.
     margin is stored per property (`targetGainRate`, 10 % by default, 0–100 %). A
     non-positive net invested capital uses a zero base, so the target is the break-even
     price instead of a lower figure derived from a negative base.
-  - *estimated equity* — estimated value − outstanding debt. *Estimated gain* —
+  - *estimated equity* — the latest append-only valuation − outstanding debt, only
+    when both figures are known in the same currency. With no valuation, an unknown
+    debt, or a currency mismatch it reads **unknown**, never zero. *Estimated gain* —
     estimated equity − net invested capital, before selling costs. A dated entry is
-    required: an amount without its date (or a date without its amount) is refused.
+    required for the legacy single-value form; history rows carry their own valued-on
+    date, amount, explicit currency and optional source note. New rows are append-only
+    so prior valuations remain auditable; currencies are never converted.
   - *gap to target* — target price − estimated value; positive means the target is still
     ahead. The status is one of: sold, no estimate, unknown (a missing input), below
     target, target reached — printed literally, never inferred from a zero.

@@ -601,9 +601,25 @@ model Property {
   workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   cashflows PropertyCashflow[]
   loans     PropertyLoan[]
+  valuations PropertyValuation[]
 
   @@unique([workspaceId, name])
   @@index([workspaceId])
+}
+
+/// Append-only valuation snapshot. A missing row means unknown, never zero.
+model PropertyValuation {
+  id         String   @id @default(cuid())
+  propertyId String
+  valuedOn   DateTime @db.Date
+  amount     Decimal  @db.Decimal(18, 2)
+  currency   String   @db.Char(3)
+  sourceNote String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, valuedOn])
 }
 
 /// A loan financing a property.

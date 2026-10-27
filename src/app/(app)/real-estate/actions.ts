@@ -16,6 +16,7 @@ import {
   cashflowInputSchema,
   propertyInputSchema,
   propertySaleInputSchema,
+  propertyValuationInputSchema,
   propertyUpdateSchema,
 } from "@/modules/real-estate/domain";
 import { loanInputSchema, loanUpdateSchema } from "@/modules/real-estate/loans";
@@ -23,6 +24,7 @@ import {
   createCashflow,
   createLoan,
   createProperty,
+  createPropertyValuation,
   deleteLoan,
   deleteProperty,
   findLoan,
@@ -74,6 +76,23 @@ export async function createPropertyAction(values: unknown): Promise<ActionResul
 
   revalidatePath("/real-estate");
   revalidatePath("/dashboard");
+  return { status: "ok" };
+}
+
+export async function createPropertyValuationAction(values: unknown): Promise<ActionResult> {
+  const user = await requireModule("real-estate");
+  const parsed = propertyValuationInputSchema.safeParse(values);
+  if (!parsed.success) {
+    return invalidResult(parsed.error);
+  }
+
+  const input = parsed.data;
+  const saved = await createPropertyValuation(user.workspace.id, input);
+  if (!saved) {
+    return rejectedResult("propertyId", "Bien introuvable : il a peut-être déjà été supprimé.");
+  }
+
+  revalidateProperty(input.propertyId);
   return { status: "ok" };
 }
 

@@ -1,11 +1,14 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import {
+  computeEquity,
   computeSaleAnalysis,
   computeSaleProceeds,
+  latestPropertyValuation,
   sumOutstandingDebt,
   type SaleAnalysisInput,
 } from "./valuation";
+import type { PropertyValuation } from "./domain";
 
 /** Fictitious amounts only. */
 function input(overrides: Partial<SaleAnalysisInput> = {}): SaleAnalysisInput {
@@ -34,6 +37,44 @@ describe("sumOutstandingDebt", () => {
 
     expect(result.debt?.toFixed(2)).toBe("0.00");
     expect(result.unknownBalances).toBe(0);
+  });
+
+  describe("property valuation history and equity", () => {
+    const valuation = (overrides: Partial<PropertyValuation> = {}): PropertyValuation => ({
+      id: "valuation-1",
+      valuedOn: new Date(Date.UTC(2026, 0, 1)),
+      amount: new Decimal("250000"),
+      currency: "EUR",
+      sourceNote: null,
+      createdAt: new Date(Date.UTC(2026, 0, 2)),
+      ...overrides,
+    });
+
+    it("keeps equity unknown without a valuation", () => {
+      expect(computeEquity(null, new Decimal("100"), "EUR")).toBeNull();
+    });
+
+    it("uses the latest dated valuation", () => {
+      const latest = latestPropertyValuation([
+        valuation(),
+        valuation({
+          id: "valuation-2",
+          valuedOn: new Date(Date.UTC(2026, 5, 1)),
+          amount: new Decimal("275000"),
+        }),
+      ]);
+
+      expect(latest?.amount.toFixed(2)).toBe("275000.00");
+      expect(computeEquity(latest, new Decimal("150000"), "EUR")?.toFixed(2)).toBe(
+        "125000.00",
+      );
+    });
+
+    it("does not mix valuation and debt currencies", () => {
+      expect(
+        computeEquity(valuation({ currency: "USD" }), new Decimal("100"), "EUR"),
+      ).toBeNull();
+    });
   });
 
   it("adds the recorded balances of the property's currency", () => {
