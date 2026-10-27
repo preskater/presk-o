@@ -41,6 +41,9 @@ ENV NODE_ENV=production
 RUN useradd --system --uid 1001 --create-home nextjs
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+# Names of the expected migrations, read by the diagnostics page to detect pending ones
+# (SO-03). SQL files only, a few KB; the Prisma CLI stays out of this image.
+COPY --from=builder --chown=nextjs:nextjs /app/prisma/migrations ./prisma/migrations
 
 USER nextjs
 EXPOSE 3000

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Badge,
   Card,
@@ -48,6 +49,14 @@ export default async function AccountPage() {
       <PageHeader
         title="Compte"
         description="Adresse, nom et mot de passe du propriétaire. Aucune inscription publique : ce compte est le seul."
+        actions={
+          <Link
+            href="/diagnostics"
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Diagnostic du système
+          </Link>
+        }
       />
 
       {seedForcesPassword ? (
