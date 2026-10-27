@@ -8,7 +8,9 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireModule } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
 import { readTableSort } from "@/lib/table-sort";
@@ -87,25 +89,22 @@ export default async function IntegrationsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await requireModule("development");
+  const user = await requireUser();
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "development")) {
+    return <ModuleDisabled moduleKey="development" workspace={user.workspace} />;
+  }
   const params = await searchParams;
-  const [
-    connections,
-    issues,
-    milestones,
-    runs,
-    projects,
-    cacheEntries,
-    ciRepositories,
-  ] = await Promise.all([
-    listConnections(user.id),
-    listIssues(user.id),
-    listMilestones(user.id),
-    listSyncRuns(user.id),
-    listProjects(user.id),
-    listProviderCache(user.id),
-    listCiRepositories(user.id),
-  ]);
+  const [connections, issues, milestones, runs, projects, cacheEntries, ciRepositories] =
+    await Promise.all([
+      listConnections(user.workspace.id),
+      listIssues(user.workspace.id),
+      listMilestones(user.workspace.id),
+      listSyncRuns(user.workspace.id),
+      listProjects(user.workspace.id),
+      listProviderCache(user.workspace.id),
+      listCiRepositories(user.workspace.id),
+    ]);
 
   // One clock for the whole page: a connection stale at render is stale everywhere.
   const now = new Date();

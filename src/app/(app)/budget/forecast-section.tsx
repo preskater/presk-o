@@ -78,11 +78,11 @@ const STATUS_TONES: Record<
  * the Salaire tab, so the two can never disagree.
  */
 export async function ForecastSection({
-  userId,
+  workspaceId,
   monthKey,
   editRecurringId,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
   /** `?editRecurring=`, an identifier to look up: a foreign one finds nothing. */
@@ -92,7 +92,7 @@ export async function ForecastSection({
   const range = monthRange(year, month);
   const monthLabel = formatMonthLabel(year, month);
 
-  await ensureRecurringOccurrences(userId, year, month);
+  await ensureRecurringOccurrences(workspaceId, year, month);
 
   // The scheduler reads the six months after the displayed one: their whole calendar and
   // their salary bookings are fetched once here, so the rows and the monthly prévision
@@ -120,33 +120,33 @@ export async function ForecastSection({
     upcomingRecorded,
     editTarget,
   ] = await Promise.all([
-    listRecurringEntries(userId),
-    listRecurringOccurrences(userId, { from: range.start, to: range.end }),
-    listAccounts(userId),
-    listCategories(userId),
-    findSalarySetting(userId),
-    listSalaryRates(userId),
+    listRecurringEntries(workspaceId),
+    listRecurringOccurrences(workspaceId, { from: range.start, to: range.end }),
+    listAccounts(workspaceId),
+    listCategories(workspaceId),
+    findSalarySetting(workspaceId),
+    listSalaryRates(workspaceId),
     // The month's calendar, read exactly like the Salaire tab reads it: the prévision
     // and the booking recompute the same figures from the same rows.
-    listWorkDays(userId, { from: range.start, to: range.end }),
-    findTransactionByExternalRef(userId, salaryBookingRef(year, month)),
+    listWorkDays(workspaceId, { from: range.start, to: range.end }),
+    findTransactionByExternalRef(workspaceId, salaryBookingRef(year, month)),
     // The scheduler's salary: one read for the window's calendar, one booking lookup per
     // month (indexed through the stable `salary:YYYY-MM` reference).
-    listWorkDays(userId, upcomingRange),
+    listWorkDays(workspaceId, upcomingRange),
     Promise.all(
       upcomingKeys.map((key) => {
         const parsed = parseMonthKey(key);
         return findTransactionByExternalRef(
-          userId,
+          workspaceId,
           salaryBookingRef(parsed.year, parsed.month),
         );
       }),
     ),
     // The simulated balance starts from the recorded cumulative strictly before the
     // window, then walks the window's recorded operations month by month.
-    sumTransactionsByCurrency(userId, { before: upcomingRange.from }),
-    listTransactionsForSeries(userId, { from: upcomingRange.from, to: upcomingRange.to }),
-    editRecurringId ? findRecurringEntry(userId, editRecurringId) : Promise.resolve(null),
+    sumTransactionsByCurrency(workspaceId, { before: upcomingRange.from }),
+    listTransactionsForSeries(workspaceId, { from: upcomingRange.from, to: upcomingRange.to }),
+    editRecurringId ? findRecurringEntry(workspaceId, editRecurringId) : Promise.resolve(null),
   ]);
 
   const entryEditing = editTarget;

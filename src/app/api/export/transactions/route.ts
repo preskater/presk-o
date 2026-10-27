@@ -91,7 +91,7 @@ export async function GET(request: Request): Promise<Response> {
     | undefined;
   const rawReconciled = url.searchParams.get("reconciled");
 
-  const transactions = await listTransactions(user.id, {
+  const transactions = await listTransactions(user.workspace.id, {
     ...window,
     accountId: url.searchParams.get("account") ?? undefined,
     categoryId: url.searchParams.get("category") ?? undefined,

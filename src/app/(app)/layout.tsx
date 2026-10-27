@@ -39,6 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               { href: "/dashboard", label: "Tableau de bord" },
               ...moduleNavLinks(user.workspace.modules),
               { href: "/alerts", label: "Alertes" },
+              { href: "/modules", label: "Modules" },
               { href: "/account", label: "Compte" },
             ]}
           >

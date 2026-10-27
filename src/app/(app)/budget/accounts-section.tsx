@@ -26,10 +26,10 @@ import { CategoriesManager } from "./categories-manager";
  * (no account owns it until it is booked) and the card says that too.
  */
 export async function AccountsSection({
-  userId,
+  workspaceId,
   monthKey,
 }: {
-  userId: string;
+  workspaceId: string;
   monthKey: string;
 }) {
   const { year, month } = parseMonthKey(monthKey);
@@ -37,10 +37,10 @@ export async function AccountsSection({
   const monthLabel = formatMonthLabel(year, month);
 
   const [accounts, balanceTotals, pendingOccurrences, categories] = await Promise.all([
-    listAccountsForManagement(userId),
-    listAccountBalanceTotals(userId),
-    listPendingOccurrenceAmounts(userId, { from: range.start, to: range.end }),
-    listCategoryUsage(userId),
+    listAccountsForManagement(workspaceId),
+    listAccountBalanceTotals(workspaceId),
+    listPendingOccurrenceAmounts(workspaceId, { from: range.start, to: range.end }),
+    listCategoryUsage(workspaceId),
   ]);
 
   const balanceByAccount = new Map(balanceTotals.map((total) => [total.accountId, total]));

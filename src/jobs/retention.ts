@@ -9,7 +9,7 @@ import { pruneSyncRuns } from "@/modules/integrations/repository";
  * without bound is the run history, so that is what this policy bounds.
  *
  * The cleanup is run deliberately — by the owner or by an external scheduler — and
- * never from the web process. It is owner-scoped, bounded by the cutoff and safe to
+ * never from the web process. It is workspace-scoped, bounded by the cutoff and safe to
  * re-run; the most recent successful run of each connection is always kept, so the
  * freshness display survives a long pause.
  */
@@ -24,16 +24,16 @@ export function retentionCutoff(
 
 export async function cleanUpSyncRuns(
   options: { now?: Date; retentionDays?: number } = {},
-): Promise<{ owners: number; deleted: number }> {
+): Promise<{ workspaces: number; deleted: number }> {
   const now = options.now ?? new Date();
   const olderThan = retentionCutoff(now, options.retentionDays);
 
-  const owners = await getPrisma().user.findMany({ select: { id: true } });
+  const workspaces = await getPrisma().workspace.findMany({ select: { id: true } });
 
   let deleted = 0;
-  for (const owner of owners) {
-    deleted += await pruneSyncRuns({ userId: owner.id, olderThan });
+  for (const workspace of workspaces) {
+    deleted += await pruneSyncRuns({ workspaceId: workspace.id, olderThan });
   }
 
-  return { owners: owners.length, deleted };
+  return { workspaces: workspaces.length, deleted };
 }

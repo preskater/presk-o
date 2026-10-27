@@ -29,8 +29,9 @@ import { signedTransferLegs } from "./transfers";
 /**
  * Budget persistence.
  *
- * Every function takes the owner identifier and filters on it: a query that
- * forgets the owner would expose another account's data.
+ * Every function takes the workspace identifier and filters on it: a query that
+ * forgets the workspace would expose another workspace's data. A foreign workspace's
+ * row reads as "not found", like an unknown one.
  */
 
 export const TRANSACTION_SORTS = ["date", "amount", "label"] as const;
@@ -57,9 +58,9 @@ export type TransactionFilters = {
 export const TRANSACTION_PAGE_SIZE = 200;
 
 /** The shared `where` of every filtered transaction read (list, count, export). */
-function transactionWhere(userId: string, filters: TransactionFilters) {
+function transactionWhere(workspaceId: string, filters: TransactionFilters) {
   return {
-    userId,
+    workspaceId,
     ...(filters.accountId ? { accountId: filters.accountId } : {}),
     ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
     ...(filters.type ? { type: filters.type } : {}),
@@ -99,9 +100,9 @@ function transactionOrderBy(
   }
 }
 
-export async function listAccounts(userId: string): Promise<AccountSummary[]> {
+export async function listAccounts(workspaceId: string): Promise<AccountSummary[]> {
   const rows = await getPrisma().account.findMany({
-    where: { userId, archivedAt: null },
+    where: { workspaceId, archivedAt: null },
     orderBy: { name: "asc" },
     select: { id: true, name: true, type: true, currency: true },
   });
@@ -114,9 +115,9 @@ export async function listAccounts(userId: string): Promise<AccountSummary[]> {
   }));
 }
 
-export async function listCategories(userId: string): Promise<CategorySummary[]> {
+export async function listCategories(workspaceId: string): Promise<CategorySummary[]> {
   const rows = await getPrisma().category.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ kind: "asc" }, { name: "asc" }],
     select: { id: true, name: true, kind: true },
   });
@@ -195,11 +196,11 @@ function toTransactionRecord(row: TransactionRow): TransactionRecord {
 }
 
 export async function listTransactions(
-  userId: string,
+  workspaceId: string,
   filters: TransactionFilters = {},
 ): Promise<TransactionRecord[]> {
   const rows = await getPrisma().transaction.findMany({
-    where: transactionWhere(userId, filters),
+    where: transactionWhere(workspaceId, filters),
     orderBy: transactionOrderBy(filters),
     ...(filters.skip ? { skip: filters.skip } : {}),
     take: filters.take ?? TRANSACTION_PAGE_SIZE,
@@ -216,11 +217,11 @@ export async function listTransactions(
  * a query string asked for: an identifier belonging to someone else returns nothing.
  */
 export async function findTransaction(
-  userId: string,
+  workspaceId: string,
   transactionId: string,
 ): Promise<TransactionRecord | null> {
   const row = await getPrisma().transaction.findFirst({
-    where: { id: transactionId, userId },
+    where: { id: transactionId, workspaceId },
     select: TRANSACTION_SELECT,
   });
 
@@ -235,11 +236,11 @@ export async function findTransaction(
  * have edited afterwards.
  */
 export async function findTransactionByExternalRef(
-  userId: string,
+  workspaceId: string,
   externalRef: string,
 ): Promise<TransactionRecord | null> {
   const row = await getPrisma().transaction.findFirst({
-    where: { userId, externalRef },
+    where: { workspaceId, externalRef },
     select: TRANSACTION_SELECT,
   });
 
@@ -248,10 +249,10 @@ export async function findTransactionByExternalRef(
 
 /** Counts the filtered rows, so the table can render an honest "page 2 of N". */
 export async function countTransactions(
-  userId: string,
+  workspaceId: string,
   filters: TransactionFilters = {},
 ): Promise<number> {
-  return getPrisma().transaction.count({ where: transactionWhere(userId, filters) });
+  return getPrisma().transaction.count({ where: transactionWhere(workspaceId, filters) });
 }
 
 /**
@@ -274,12 +275,12 @@ export const LABEL_HISTORY_LIMIT = 200;
  * the only place that decides what counts as the same label.
  */
 export async function listLabelHistory(
-  userId: string,
+  workspaceId: string,
   limit: number = LABEL_HISTORY_LIMIT,
 ): Promise<LabelUsage[]> {
   const rows = await getPrisma().transaction.groupBy({
     by: ["label"],
-    where: { userId },
+    where: { workspaceId },
     _count: { _all: true },
     _max: { operationDate: true },
     orderBy: { _count: { label: "desc" } },
@@ -312,11 +313,11 @@ export const SERIES_ROW_LIMIT = 5000;
  * needs every row of its window, and the two bounds are different on purpose.
  */
 export async function listTransactionsForSeries(
-  userId: string,
+  workspaceId: string,
   filters: TransactionFilters,
 ): Promise<{ transactions: TransactionRecord[]; truncated: boolean }> {
   // One row more than the bound: its presence is what proves the window was cut.
-  const rows = await listTransactions(userId, { ...filters, take: SERIES_ROW_LIMIT + 1 });
+  const rows = await listTransactions(workspaceId, { ...filters, take: SERIES_ROW_LIMIT + 1 });
   const truncated = rows.length > SERIES_ROW_LIMIT;
 
   return { transactions: truncated ? rows.slice(0, SERIES_ROW_LIMIT) : rows, truncated };
@@ -331,12 +332,12 @@ export async function listTransactionsForSeries(
  * removed, rather than a generic "deleted".
  */
 export async function deleteTransaction(
-  userId: string,
+  workspaceId: string,
   transactionId: string,
 ): Promise<{ deleted: boolean; deletedCount: number; grouped: boolean }> {
   const prisma = getPrisma();
   const row = await prisma.transaction.findFirst({
-    where: { id: transactionId, userId },
+    where: { id: transactionId, workspaceId },
     select: { transferGroupId: true },
   });
 
@@ -346,14 +347,14 @@ export async function deleteTransaction(
 
   if (row.transferGroupId) {
     const { count } = await prisma.transaction.deleteMany({
-      where: { userId, transferGroupId: row.transferGroupId },
+      where: { workspaceId, transferGroupId: row.transferGroupId },
     });
 
     return { deleted: count > 0, deletedCount: count, grouped: true };
   }
 
   const { count } = await prisma.transaction.deleteMany({
-    where: { id: transactionId, userId },
+    where: { id: transactionId, workspaceId },
   });
 
   return { deleted: count === 1, deletedCount: count, grouped: false };
@@ -362,16 +363,16 @@ export async function deleteTransaction(
 /**
  * Owner-scoped account lookup.
  *
- * An identifier coming from a form is never trusted: filtering on `userId` means
+ * An identifier coming from a form is never trusted: filtering on `workspaceId` means
  * a foreign identifier is simply not found. The account also carries the currency
  * of the transactions recorded on it.
  */
 export async function findAccount(
-  userId: string,
+  workspaceId: string,
   accountId: string,
 ): Promise<AccountSummary | null> {
   const row = await getPrisma().account.findFirst({
-    where: { id: accountId, userId, archivedAt: null },
+    where: { id: accountId, workspaceId, archivedAt: null },
     select: { id: true, name: true, type: true, currency: true },
   });
 
@@ -389,11 +390,11 @@ export async function findAccount(
 
 /** Owner-scoped category lookup, used the same way as `findAccount`. */
 export async function findCategory(
-  userId: string,
+  workspaceId: string,
   categoryId: string,
 ): Promise<CategorySummary | null> {
   const row = await getPrisma().category.findFirst({
-    where: { id: categoryId, userId },
+    where: { id: categoryId, workspaceId },
     select: { id: true, name: true, kind: true },
   });
 
@@ -404,16 +405,16 @@ export async function findCategory(
  * A category by name and kind, created on first use when the owner does not have it yet.
  *
  * Used to guarantee the default category a feature names (« Salaire » for the salary
- * booking): an owner who never created one still needs it. The unique (userId, name,
+ * booking): an owner who never created one still needs it. The unique (workspaceId, name,
  * kind) is the race guard — a lost race re-reads the row the other request created
  * instead of failing.
  */
 export async function ensureCategory(input: {
-  userId: string;
+  workspaceId: string;
   name: string;
   kind: CategoryKind;
 }): Promise<CategorySummary> {
-  const where = { userId: input.userId, name: input.name, kind: input.kind };
+  const where = { workspaceId: input.workspaceId, name: input.name, kind: input.kind };
   const select = { id: true, name: true, kind: true } as const;
 
   const existing = await getPrisma().category.findFirst({ where, select });
@@ -423,7 +424,7 @@ export async function ensureCategory(input: {
 
   try {
     return await getPrisma().category.create({
-      data: { userId: input.userId, name: input.name, kind: input.kind },
+      data: { workspaceId: input.workspaceId, name: input.name, kind: input.kind },
       select,
     });
   } catch (error) {
@@ -447,11 +448,11 @@ export async function ensureCategory(input: {
  * no amount of its own, so it needs the transaction's currency and label.
  */
 export async function findTransactionRef(
-  userId: string,
+  workspaceId: string,
   transactionId: string,
 ): Promise<{ id: string; label: string; currency: Currency } | null> {
   const row = await getPrisma().transaction.findFirst({
-    where: { id: transactionId, userId },
+    where: { id: transactionId, workspaceId },
     select: { id: true, label: true, currency: true },
   });
 
@@ -459,14 +460,14 @@ export async function findTransactionRef(
 }
 
 export async function createAccount(input: {
-  userId: string;
+  workspaceId: string;
   name: string;
   type: AccountType;
   currency: Currency;
 }): Promise<{ id: string }> {
   return getPrisma().account.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       name: input.name.trim(),
       type: input.type,
       currency: input.currency,
@@ -486,10 +487,10 @@ export type AccountManagementRecord = {
 
 /** Every account of the owner, archived ones included, oldest first. */
 export async function listAccountsForManagement(
-  userId: string,
+  workspaceId: string,
 ): Promise<AccountManagementRecord[]> {
   const rows = await getPrisma().account.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ createdAt: "asc" }],
     select: { id: true, name: true, type: true, currency: true, archivedAt: true },
   });
@@ -505,11 +506,11 @@ export async function listAccountsForManagement(
 
 /** One account by identifier, archived ones included; used by the management screen. */
 export async function findManagedAccount(
-  userId: string,
+  workspaceId: string,
   accountId: string,
 ): Promise<AccountManagementRecord | null> {
   const row = await getPrisma().account.findFirst({
-    where: { id: accountId, userId },
+    where: { id: accountId, workspaceId },
     select: { id: true, name: true, type: true, currency: true, archivedAt: true },
   });
 
@@ -526,20 +527,20 @@ export async function findManagedAccount(
 
 /** How many transactions the account holds, used before a currency change. */
 export async function countAccountTransactions(
-  userId: string,
+  workspaceId: string,
   accountId: string,
 ): Promise<number> {
-  return getPrisma().transaction.count({ where: { userId, accountId } });
+  return getPrisma().transaction.count({ where: { workspaceId, accountId } });
 }
 
 /** Replaces the editable fields of one account; `false` means "gone or not yours". */
 export async function updateAccount(
-  userId: string,
+  workspaceId: string,
   accountId: string,
   input: { name: string; type: AccountType; currency: Currency },
 ): Promise<boolean> {
   const { count } = await getPrisma().account.updateMany({
-    where: { id: accountId, userId },
+    where: { id: accountId, workspaceId },
     data: { name: input.name.trim(), type: input.type, currency: input.currency },
   });
 
@@ -554,12 +555,12 @@ export async function updateAccount(
  * stamp — nothing else about the account changes.
  */
 export async function setAccountArchived(
-  userId: string,
+  workspaceId: string,
   accountId: string,
   archived: boolean,
 ): Promise<boolean> {
   const { count } = await getPrisma().account.updateMany({
-    where: { id: accountId, userId },
+    where: { id: accountId, workspaceId },
     data: { archivedAt: archived ? new Date() : null },
   });
 
@@ -567,22 +568,22 @@ export async function setAccountArchived(
 }
 
 export async function createCategory(input: {
-  userId: string;
+  workspaceId: string;
   name: string;
   kind: CategorySummary["kind"];
 }): Promise<{ id: string }> {
   return getPrisma().category.create({
-    data: { userId: input.userId, name: input.name.trim(), kind: input.kind },
+    data: { workspaceId: input.workspaceId, name: input.name.trim(), kind: input.kind },
     select: { id: true },
   });
 }
 
 /** How many transactions the category carries, used before a kind change. */
 export async function countCategoryTransactions(
-  userId: string,
+  workspaceId: string,
   categoryId: string,
 ): Promise<number> {
-  return getPrisma().transaction.count({ where: { userId, categoryId } });
+  return getPrisma().transaction.count({ where: { workspaceId, categoryId } });
 }
 
 /**
@@ -590,14 +591,14 @@ export async function countCategoryTransactions(
  * expense category to income would re-label existing envelopes and transactions.
  */
 export async function countCategoryReferences(
-  userId: string,
+  workspaceId: string,
   categoryId: string,
 ): Promise<{ transactions: number; budgets: number; recurring: number }> {
   const prisma = getPrisma();
   const [transactions, budgets, recurring] = await Promise.all([
-    prisma.transaction.count({ where: { userId, categoryId } }),
-    prisma.budget.count({ where: { userId, categoryId } }),
-    prisma.recurringEntry.count({ where: { userId, categoryId } }),
+    prisma.transaction.count({ where: { workspaceId, categoryId } }),
+    prisma.budget.count({ where: { workspaceId, categoryId } }),
+    prisma.recurringEntry.count({ where: { workspaceId, categoryId } }),
   ]);
 
   return { transactions, budgets, recurring };
@@ -605,12 +606,12 @@ export async function countCategoryReferences(
 
 /** Renames a category, or moves it between kinds. `false` means "gone or not yours". */
 export async function updateCategory(
-  userId: string,
+  workspaceId: string,
   categoryId: string,
   input: { name: string; kind: CategoryKind },
 ): Promise<boolean> {
   const { count } = await getPrisma().category.updateMany({
-    where: { id: categoryId, userId },
+    where: { id: categoryId, workspaceId },
     data: { name: input.name.trim(), kind: input.kind },
   });
 
@@ -631,23 +632,23 @@ export type CategoryUsage = {
  * The owner's categories with their usage counts, so the management screen can warn
  * before a kind change, a merge or a deletion instead of surprising the owner.
  */
-export async function listCategoryUsage(userId: string): Promise<CategoryUsage[]> {
+export async function listCategoryUsage(workspaceId: string): Promise<CategoryUsage[]> {
   const prisma = getPrisma();
   const [categories, transactions, budgets, recurring] = await Promise.all([
-    listCategories(userId),
+    listCategories(workspaceId),
     prisma.transaction.groupBy({
       by: ["categoryId"],
-      where: { userId, categoryId: { not: null } },
+      where: { workspaceId, categoryId: { not: null } },
       _count: { _all: true },
     }),
     prisma.budget.groupBy({
       by: ["categoryId"],
-      where: { userId },
+      where: { workspaceId },
       _count: { _all: true },
     }),
     prisma.recurringEntry.groupBy({
       by: ["categoryId"],
-      where: { userId, categoryId: { not: null } },
+      where: { workspaceId, categoryId: { not: null } },
       _count: { _all: true },
     }),
   ]);
@@ -688,40 +689,40 @@ export type CategoryMergeSummary = {
  * `null` means the source does not exist (or is not the owner's).
  */
 export async function mergeCategories(
-  userId: string,
+  workspaceId: string,
   sourceId: string,
   targetId: string,
 ): Promise<CategoryMergeSummary | null> {
   const prisma = getPrisma();
 
   return prisma.$transaction(async (tx) => {
-    const source = await tx.category.findFirst({ where: { id: sourceId, userId } });
+    const source = await tx.category.findFirst({ where: { id: sourceId, workspaceId } });
     if (!source) {
       return null;
     }
 
     const movedTransactions = (
       await tx.transaction.updateMany({
-        where: { userId, categoryId: sourceId },
+        where: { workspaceId, categoryId: sourceId },
         data: { categoryId: targetId },
       })
     ).count;
 
     const movedRecurring = (
       await tx.recurringEntry.updateMany({
-        where: { userId, categoryId: sourceId },
+        where: { workspaceId, categoryId: sourceId },
         data: { categoryId: targetId },
       })
     ).count;
 
     const sourceBudgets = await tx.budget.findMany({
-      where: { userId, categoryId: sourceId },
+      where: { workspaceId, categoryId: sourceId },
       select: { id: true, year: true, month: true, currency: true },
     });
     const targetKeys = new Set(
       (
         await tx.budget.findMany({
-          where: { userId, categoryId: targetId },
+          where: { workspaceId, categoryId: targetId },
           select: { year: true, month: true, currency: true },
         })
       ).map((budget) => `${budget.year}-${budget.month}-${budget.currency}`),
@@ -739,7 +740,7 @@ export async function mergeCategories(
         ? 0
         : (
             await tx.budget.updateMany({
-              where: { userId, id: { in: movable } },
+              where: { workspaceId, id: { in: movable } },
               data: { categoryId: targetId },
             })
           ).count;
@@ -749,11 +750,11 @@ export async function mergeCategories(
         ? 0
         : (
             await tx.budget.deleteMany({
-              where: { userId, id: { in: conflicting } },
+              where: { workspaceId, id: { in: conflicting } },
             })
           ).count;
 
-    const { count } = await tx.category.deleteMany({ where: { id: sourceId, userId } });
+    const { count } = await tx.category.deleteMany({ where: { id: sourceId, workspaceId } });
     if (count !== 1) {
       // Rolling back beats a half-merged state: every write above is replayed or none is.
       throw new Error("Category merge could not delete its source row");
@@ -771,11 +772,11 @@ export async function mergeCategories(
  * is why the UI shows the counts before asking for confirmation.
  */
 export async function deleteCategory(
-  userId: string,
+  workspaceId: string,
   categoryId: string,
 ): Promise<boolean> {
   const { count } = await getPrisma().category.deleteMany({
-    where: { id: categoryId, userId },
+    where: { id: categoryId, workspaceId },
   });
 
   return count === 1;
@@ -789,7 +790,7 @@ export async function deleteCategory(
  * duplicating a line.
  */
 export async function createTransaction(input: {
-  userId: string;
+  workspaceId: string;
   accountId: string;
   categoryId: string | null;
   type: TransactionType;
@@ -802,7 +803,7 @@ export async function createTransaction(input: {
 }): Promise<{ id: string }> {
   return getPrisma().transaction.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       accountId: input.accountId,
       categoryId: input.categoryId,
       type: input.type,
@@ -838,12 +839,12 @@ export type TransactionWrite = {
  * corrected import stays marked as an import.
  */
 export async function updateTransaction(
-  userId: string,
+  workspaceId: string,
   transactionId: string,
   input: TransactionWrite,
 ): Promise<boolean> {
   const { count } = await getPrisma().transaction.updateMany({
-    where: { id: transactionId, userId },
+    where: { id: transactionId, workspaceId },
     data: {
       accountId: input.accountId,
       categoryId: input.categoryId,
@@ -869,7 +870,7 @@ export async function updateTransaction(
  * neither a receipt nor a cost (see `categoryKindForTransactionType`).
  */
 export async function createTransferGroup(input: {
-  userId: string;
+  workspaceId: string;
   fromAccountId: string;
   toAccountId: string;
   currency: Currency;
@@ -885,7 +886,7 @@ export async function createTransferGroup(input: {
   const legs = signedTransferLegs(input.amount);
 
   const shared = {
-    userId: input.userId,
+    workspaceId: input.workspaceId,
     categoryId: null,
     type: "TRANSFER" as const,
     currency: input.currency,
@@ -926,7 +927,7 @@ export async function createTransferGroup(input: {
  * correction stays the entry form's job. `false` means "gone or not yours".
  */
 export async function setTransactionReconciled(input: {
-  userId: string;
+  workspaceId: string;
   transactionId: string;
   reconciled: boolean;
   now?: Date;
@@ -934,7 +935,7 @@ export async function setTransactionReconciled(input: {
   const now = input.now ?? new Date();
   const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const { count } = await getPrisma().transaction.updateMany({
-    where: { id: input.transactionId, userId: input.userId },
+    where: { id: input.transactionId, workspaceId: input.workspaceId },
     data: { reconciledAt: input.reconciled ? day : null },
   });
 
@@ -944,8 +945,8 @@ export async function setTransactionReconciled(input: {
 /**
  * Monthly budgets.
  *
- * Owner-scoped like every other read: the tuple (category, year, month, currency) is
- * unique per owner, and every statement filters on `userId` — a foreign identifier is
+ * Workspace-scoped like every other read: the tuple (category, year, month, currency) is
+ * unique per workspace, and every statement filters on `workspaceId` — a foreign identifier is
  * simply not found.
  */
 
@@ -987,11 +988,11 @@ function toBudgetRecord(row: BudgetRow): BudgetRecord {
 
 /** The budgets of one month, sorted so a currency's rows stay together. */
 export async function listBudgets(
-  userId: string,
+  workspaceId: string,
   period: { year: number; month: number },
 ): Promise<BudgetRecord[]> {
   const rows = await getPrisma().budget.findMany({
-    where: { userId, year: period.year, month: period.month },
+    where: { workspaceId, year: period.year, month: period.month },
     orderBy: [{ currency: "asc" }, { category: { name: "asc" } }],
     select: BUDGET_SELECT,
   });
@@ -1001,11 +1002,11 @@ export async function listBudgets(
 
 /** One budget, scoped to its owner: read before an edition so the form shows the row. */
 export async function findBudget(
-  userId: string,
+  workspaceId: string,
   budgetId: string,
 ): Promise<BudgetRecord | null> {
   const row = await getPrisma().budget.findFirst({
-    where: { id: budgetId, userId },
+    where: { id: budgetId, workspaceId },
     select: BUDGET_SELECT,
   });
 
@@ -1014,12 +1015,12 @@ export async function findBudget(
 
 /** The row a (category, month, currency) tuple resolves to, if it exists. */
 export async function findBudgetByPeriod(
-  userId: string,
+  workspaceId: string,
   identity: BudgetIdentity,
 ): Promise<BudgetRecord | null> {
   const row = await getPrisma().budget.findFirst({
     where: {
-      userId,
+      workspaceId,
       categoryId: identity.categoryId,
       year: identity.year,
       month: identity.month,
@@ -1032,7 +1033,7 @@ export async function findBudgetByPeriod(
 }
 
 export async function createBudget(input: {
-  userId: string;
+  workspaceId: string;
   categoryId: string;
   year: number;
   month: number;
@@ -1041,7 +1042,7 @@ export async function createBudget(input: {
 }): Promise<{ id: string }> {
   return getPrisma().budget.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       categoryId: input.categoryId,
       year: input.year,
       month: input.month,
@@ -1068,12 +1069,12 @@ export type BudgetWrite = {
  * belongs in the `where` clause, and a foreign identifier matches nothing.
  */
 export async function updateBudget(
-  userId: string,
+  workspaceId: string,
   budgetId: string,
   input: BudgetWrite,
 ): Promise<boolean> {
   const { count } = await getPrisma().budget.updateMany({
-    where: { id: budgetId, userId },
+    where: { id: budgetId, workspaceId },
     data: {
       categoryId: input.categoryId,
       year: input.year,
@@ -1088,11 +1089,11 @@ export async function updateBudget(
 
 /** Deletes one budget of this owner; `false` means "already gone or not yours". */
 export async function deleteBudget(
-  userId: string,
+  workspaceId: string,
   budgetId: string,
 ): Promise<boolean> {
   const { count } = await getPrisma().budget.deleteMany({
-    where: { id: budgetId, userId },
+    where: { id: budgetId, workspaceId },
   });
 
   return count === 1;
@@ -1101,8 +1102,8 @@ export async function deleteBudget(
 /**
  * Salary simulation.
  *
- * One options row per owner, one rate change point per (owner, month), one work day per
- * (owner, date): every statement filters on `userId`, and the unique constraints hold
+ * One options row per workspace, one rate change point per (workspace, month), one work
+ * day per (workspace, date): every statement filters on `workspaceId`, and the unique constraints hold
  * those rules at the database level too.
  */
 
@@ -1127,10 +1128,10 @@ function toSalarySettingRecord(row: SalarySettingRow): SalarySettingRecord {
 }
 
 export async function findSalarySetting(
-  userId: string,
+  workspaceId: string,
 ): Promise<SalarySettingRecord | null> {
   const row = await getPrisma().salarySetting.findUnique({
-    where: { userId },
+    where: { workspaceId },
     select: SALARY_SETTING_SELECT,
   });
 
@@ -1142,14 +1143,14 @@ export async function findSalarySetting(
  * The hourly rate is month-scoped and lives in `SalaryRate`.
  */
 export async function upsertSalarySetting(input: {
-  userId: string;
+  workspaceId: string;
   hoursPerDay: Decimal;
   currency: Currency;
 }): Promise<void> {
   await getPrisma().salarySetting.upsert({
-    where: { userId: input.userId },
+    where: { workspaceId: input.workspaceId },
     create: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       hoursPerDay: input.hoursPerDay.toFixed(2),
       currency: input.currency,
     },
@@ -1182,9 +1183,9 @@ function toSalaryRateRecord(row: SalaryRateRow): SalaryRateRecord {
  * The table is inherently small (one row per raise), so callers resolve a month in
  * memory with `resolveSalaryRate` instead of asking a second question per month.
  */
-export async function listSalaryRates(userId: string): Promise<SalaryRateRecord[]> {
+export async function listSalaryRates(workspaceId: string): Promise<SalaryRateRecord[]> {
   const rows = await getPrisma().salaryRate.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ year: "asc" }, { month: "asc" }],
     select: SALARY_RATE_SELECT,
   });
@@ -1197,21 +1198,21 @@ export async function listSalaryRates(userId: string): Promise<SalaryRateRecord[
  * saving the same month again corrects its change point instead of piling rows up.
  */
 export async function upsertSalaryRate(input: {
-  userId: string;
+  workspaceId: string;
   year: number;
   month: number;
   hourlyRate: Decimal;
 }): Promise<void> {
   await getPrisma().salaryRate.upsert({
     where: {
-      userId_year_month: {
-        userId: input.userId,
+      workspaceId_year_month: {
+        workspaceId: input.workspaceId,
         year: input.year,
         month: input.month,
       },
     },
     create: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       year: input.year,
       month: input.month,
       hourlyRate: input.hourlyRate.toFixed(2),
@@ -1238,11 +1239,11 @@ function toWorkDayRecord(row: WorkDayRow): WorkDayRecord {
 
 /** The work days of a window; the upper bound is exclusive, like every month window. */
 export async function listWorkDays(
-  userId: string,
+  workspaceId: string,
   window: { from: Date; to: Date },
 ): Promise<WorkDayRecord[]> {
   const rows = await getPrisma().workDay.findMany({
-    where: { userId, date: { gte: window.from, lt: window.to } },
+    where: { workspaceId, date: { gte: window.from, lt: window.to } },
     orderBy: { date: "asc" },
     select: WORK_DAY_SELECT,
   });
@@ -1251,11 +1252,11 @@ export async function listWorkDays(
 }
 
 export async function findWorkDay(
-  userId: string,
+  workspaceId: string,
   date: Date,
 ): Promise<WorkDayRecord | null> {
   const row = await getPrisma().workDay.findUnique({
-    where: { userId_date: { userId, date } },
+    where: { workspaceId_date: { workspaceId, date } },
     select: WORK_DAY_SELECT,
   });
 
@@ -1263,14 +1264,14 @@ export async function findWorkDay(
 }
 
 export async function createWorkDay(input: {
-  userId: string;
+  workspaceId: string;
   date: Date;
   status: WorkDayStatus;
   hours: Decimal;
 }): Promise<{ id: string }> {
   return getPrisma().workDay.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       date: input.date,
       status: input.status,
       hours: input.hours.toFixed(2),
@@ -1281,12 +1282,12 @@ export async function createWorkDay(input: {
 
 /** Partial write by design: the cycle changes the status, an adjustment the hours. */
 export async function updateWorkDay(
-  userId: string,
+  workspaceId: string,
   date: Date,
   input: { status?: WorkDayStatus; hours?: Decimal },
 ): Promise<boolean> {
   const { count } = await getPrisma().workDay.updateMany({
-    where: { userId, date },
+    where: { workspaceId, date },
     data: {
       ...(input.status ? { status: input.status } : {}),
       ...(input.hours ? { hours: input.hours.toFixed(2) } : {}),
@@ -1297,8 +1298,8 @@ export async function updateWorkDay(
 }
 
 /** `false` means "already gone or not yours". */
-export async function deleteWorkDay(userId: string, date: Date): Promise<boolean> {
-  const { count } = await getPrisma().workDay.deleteMany({ where: { userId, date } });
+export async function deleteWorkDay(workspaceId: string, date: Date): Promise<boolean> {
+  const { count } = await getPrisma().workDay.deleteMany({ where: { workspaceId, date } });
 
   return count === 1;
 }
@@ -1307,7 +1308,7 @@ export async function deleteWorkDay(userId: string, date: Date): Promise<boolean
  * Recurring forecasts.
  *
  * Definitions describe series; occurrences are their materialised months. Every
- * statement filters on `userId`, and the unique constraints hold the invariants at the
+ * statement filters on `workspaceId`, and the unique constraints hold the invariants at the
  * database level too: one occurrence per (definition, date), one transaction per
  * confirmation.
  */
@@ -1360,9 +1361,9 @@ function toRecurringEntryRecord(row: RecurringEntryRow): RecurringEntryRecord {
 }
 
 /** All the owner's definitions, oldest first, so the list reads like a register. */
-export async function listRecurringEntries(userId: string): Promise<RecurringEntryRecord[]> {
+export async function listRecurringEntries(workspaceId: string): Promise<RecurringEntryRecord[]> {
   const rows = await getPrisma().recurringEntry.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ createdAt: "asc" }],
     select: RECURRING_ENTRY_SELECT,
   });
@@ -1372,11 +1373,11 @@ export async function listRecurringEntries(userId: string): Promise<RecurringEnt
 
 /** One definition, scoped to its owner; `null` covers foreign and deleted alike. */
 export async function findRecurringEntry(
-  userId: string,
+  workspaceId: string,
   entryId: string,
 ): Promise<RecurringEntryRecord | null> {
   const row = await getPrisma().recurringEntry.findFirst({
-    where: { id: entryId, userId },
+    where: { id: entryId, workspaceId },
     select: RECURRING_ENTRY_SELECT,
   });
 
@@ -1384,7 +1385,7 @@ export async function findRecurringEntry(
 }
 
 export async function createRecurringEntry(input: {
-  userId: string;
+  workspaceId: string;
   accountId: string;
   categoryId: string | null;
   type: ForecastType;
@@ -1396,7 +1397,7 @@ export async function createRecurringEntry(input: {
 }): Promise<{ id: string }> {
   return getPrisma().recurringEntry.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       accountId: input.accountId,
       categoryId: input.categoryId,
       type: input.type,
@@ -1418,7 +1419,7 @@ export async function createRecurringEntry(input: {
  * the next month opening. Decided ones are history and make the action refuse the change.
  */
 export async function updateRecurringEntry(
-  userId: string,
+  workspaceId: string,
   entryId: string,
   input: {
     accountId: string;
@@ -1432,7 +1433,7 @@ export async function updateRecurringEntry(
   },
 ): Promise<boolean> {
   const { count } = await getPrisma().recurringEntry.updateMany({
-    where: { id: entryId, userId },
+    where: { id: entryId, workspaceId },
     data: {
       accountId: input.accountId,
       categoryId: input.categoryId,
@@ -1458,11 +1459,11 @@ export async function updateRecurringEntry(
  * action refuses the change once one exists.
  */
 export async function deletePendingOccurrences(
-  userId: string,
+  workspaceId: string,
   recurringId: string,
 ): Promise<number> {
   const { count } = await getPrisma().recurringOccurrence.deleteMany({
-    where: { userId, recurringId, status: "PENDING" },
+    where: { workspaceId, recurringId, status: "PENDING" },
   });
 
   return count;
@@ -1476,11 +1477,11 @@ export async function deletePendingOccurrences(
  * transaction. Stopping a series is `endDate`'s job, not deletion's.
  */
 export async function countDecidedOccurrences(
-  userId: string,
+  workspaceId: string,
   recurringId: string,
 ): Promise<number> {
   return getPrisma().recurringOccurrence.count({
-    where: { userId, recurringId, status: { not: "PENDING" } },
+    where: { workspaceId, recurringId, status: { not: "PENDING" } },
   });
 }
 
@@ -1490,11 +1491,11 @@ export async function countDecidedOccurrences(
  * `false` means "already gone or not yours".
  */
 export async function deleteRecurringEntry(
-  userId: string,
+  workspaceId: string,
   entryId: string,
 ): Promise<boolean> {
   const { count } = await getPrisma().recurringEntry.deleteMany({
-    where: { id: entryId, userId },
+    where: { id: entryId, workspaceId },
   });
 
   return count === 1;
@@ -1509,11 +1510,11 @@ export async function deleteRecurringEntry(
  * domain (`plannedOccurrences`), not from this layer.
  */
 export async function ensureRecurringOccurrences(
-  userId: string,
+  workspaceId: string,
   year: number,
   month: number,
 ): Promise<void> {
-  const entries = await listRecurringEntries(userId);
+  const entries = await listRecurringEntries(workspaceId);
   const planned = plannedOccurrences(entries, year, month);
 
   if (planned.length === 0) {
@@ -1522,7 +1523,7 @@ export async function ensureRecurringOccurrences(
 
   await getPrisma().recurringOccurrence.createMany({
     data: planned.map((occurrence) => ({
-      userId,
+      workspaceId,
       recurringId: occurrence.recurringId,
       date: occurrence.date,
     })),
@@ -1563,11 +1564,11 @@ function toRecurringOccurrenceRecord(
 
 /** The occurrences of a window, earliest first; the upper bound is exclusive. */
 export async function listRecurringOccurrences(
-  userId: string,
+  workspaceId: string,
   window: { from: Date; to: Date },
 ): Promise<RecurringOccurrenceRecord[]> {
   const rows = await getPrisma().recurringOccurrence.findMany({
-    where: { userId, date: { gte: window.from, lt: window.to } },
+    where: { workspaceId, date: { gte: window.from, lt: window.to } },
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
     select: RECURRING_OCCURRENCE_SELECT,
   });
@@ -1577,11 +1578,11 @@ export async function listRecurringOccurrences(
 
 /** One occurrence, scoped to its owner. */
 export async function findRecurringOccurrence(
-  userId: string,
+  workspaceId: string,
   occurrenceId: string,
 ): Promise<RecurringOccurrenceRecord | null> {
   const row = await getPrisma().recurringOccurrence.findFirst({
-    where: { id: occurrenceId, userId },
+    where: { id: occurrenceId, workspaceId },
     select: RECURRING_OCCURRENCE_SELECT,
   });
 
@@ -1597,7 +1598,7 @@ export async function findRecurringOccurrence(
  * confirmation.
  */
 export async function decideRecurringOccurrence(
-  userId: string,
+  workspaceId: string,
   occurrenceId: string,
   decision: {
     status: Exclude<RecurringOccurrenceStatus, "PENDING">;
@@ -1605,7 +1606,7 @@ export async function decideRecurringOccurrence(
   },
 ): Promise<boolean> {
   const { count } = await getPrisma().recurringOccurrence.updateMany({
-    where: { id: occurrenceId, userId, status: "PENDING" },
+    where: { id: occurrenceId, workspaceId, status: "PENDING" },
     data: {
       status: decision.status,
       transactionId: decision.transactionId ?? null,
@@ -1667,11 +1668,11 @@ function toGoalRecord(row: GoalRow): GoalRecord {
 
 /** All the owner's goals, oldest first, so the list reads like a register. */
 export async function listGoals(
-  userId: string,
+  workspaceId: string,
   options: { take?: number } = {},
 ): Promise<GoalRecord[]> {
   const rows = await getPrisma().goal.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ createdAt: "asc" }],
     ...(options.take ? { take: options.take } : {}),
     select: GOAL_SELECT,
@@ -1681,9 +1682,9 @@ export async function listGoals(
 }
 
 /** One goal, scoped to its owner; `null` covers foreign and deleted alike. */
-export async function findGoal(userId: string, goalId: string): Promise<GoalRecord | null> {
+export async function findGoal(workspaceId: string, goalId: string): Promise<GoalRecord | null> {
   const row = await getPrisma().goal.findFirst({
-    where: { id: goalId, userId },
+    where: { id: goalId, workspaceId },
     select: GOAL_SELECT,
   });
 
@@ -1691,7 +1692,7 @@ export async function findGoal(userId: string, goalId: string): Promise<GoalReco
 }
 
 export async function createGoal(input: {
-  userId: string;
+  workspaceId: string;
   name: string;
   targetAmount: Decimal;
   currency: Currency;
@@ -1702,7 +1703,7 @@ export async function createGoal(input: {
 }): Promise<{ id: string }> {
   return getPrisma().goal.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       name: input.name,
       targetAmount: input.targetAmount.toFixed(2),
       currency: input.currency,
@@ -1717,7 +1718,7 @@ export async function createGoal(input: {
 
 /** Replaces the editable fields of one goal; `false` means "gone or not yours". */
 export async function updateGoal(
-  userId: string,
+  workspaceId: string,
   goalId: string,
   input: {
     name: string;
@@ -1730,7 +1731,7 @@ export async function updateGoal(
   },
 ): Promise<boolean> {
   const { count } = await getPrisma().goal.updateMany({
-    where: { id: goalId, userId },
+    where: { id: goalId, workspaceId },
     data: {
       name: input.name,
       targetAmount: input.targetAmount.toFixed(2),
@@ -1746,8 +1747,8 @@ export async function updateGoal(
 }
 
 /** Deletes one goal of this owner; `false` means "already gone or not yours". */
-export async function deleteGoal(userId: string, goalId: string): Promise<boolean> {
-  const { count } = await getPrisma().goal.deleteMany({ where: { id: goalId, userId } });
+export async function deleteGoal(workspaceId: string, goalId: string): Promise<boolean> {
+  const { count } = await getPrisma().goal.deleteMany({ where: { id: goalId, workspaceId } });
 
   return count === 1;
 }
@@ -1787,12 +1788,12 @@ function toGoalContributionRecord(row: GoalContributionRow): GoalContributionRec
 
 /** One goal's contributions, most recent first, bounded by `take`. */
 export async function listGoalContributions(
-  userId: string,
+  workspaceId: string,
   goalId: string,
   options: { take?: number } = {},
 ): Promise<GoalContributionRecord[]> {
   const rows = await getPrisma().goalContribution.findMany({
-    where: { userId, goalId },
+    where: { workspaceId, goalId },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     ...(options.take ? { take: options.take } : {}),
     select: GOAL_CONTRIBUTION_SELECT,
@@ -1809,11 +1810,11 @@ export async function listGoalContributions(
  * total — it only bounds what is displayed.
  */
 export async function listGoalContributionsForOwner(
-  userId: string,
+  workspaceId: string,
   options: { take: number },
 ): Promise<GoalContributionRecord[]> {
   const rows = await getPrisma().goalContribution.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     take: options.take,
     select: GOAL_CONTRIBUTION_SELECT,
@@ -1830,11 +1831,11 @@ export async function listGoalContributionsForOwner(
  * has no contribution — `null` downstream, never a zero.
  */
 export async function sumGoalContributions(
-  userId: string,
+  workspaceId: string,
 ): Promise<Map<string, { count: number; total: Decimal }>> {
   const rows = await getPrisma().goalContribution.groupBy({
     by: ["goalId"],
-    where: { userId },
+    where: { workspaceId },
     _count: { _all: true },
     _sum: { amount: true },
   });
@@ -1851,7 +1852,7 @@ export async function sumGoalContributions(
 }
 
 export async function createGoalContribution(input: {
-  userId: string;
+  workspaceId: string;
   goalId: string;
   amount: Decimal;
   date: Date;
@@ -1859,7 +1860,7 @@ export async function createGoalContribution(input: {
 }): Promise<{ id: string }> {
   return getPrisma().goalContribution.create({
     data: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       goalId: input.goalId,
       amount: input.amount.toFixed(2),
       date: input.date,
@@ -1871,11 +1872,11 @@ export async function createGoalContribution(input: {
 
 /** Deletes one contribution; `false` means "already gone or not yours". */
 export async function deleteGoalContribution(
-  userId: string,
+  workspaceId: string,
   contributionId: string,
 ): Promise<boolean> {
   const { count } = await getPrisma().goalContribution.deleteMany({
-    where: { id: contributionId, userId },
+    where: { id: contributionId, workspaceId },
   });
 
   return count === 1;
@@ -1889,11 +1890,11 @@ export async function deleteGoalContribution(
  * unknown balance), two states the sum alone cannot distinguish.
  */
 export async function readAccountBalance(
-  userId: string,
+  workspaceId: string,
   accountId: string,
 ): Promise<{ transactionCount: number; balance: Decimal }> {
   const result = await getPrisma().transaction.aggregate({
-    where: { userId, accountId },
+    where: { workspaceId, accountId },
     _count: { _all: true },
     _sum: { amount: true },
   });
@@ -1915,7 +1916,7 @@ export async function readAccountBalance(
  * with the balance so the management screen can say since when the account is silent.
  */
 export async function listAccountBalanceTotals(
-  userId: string,
+  workspaceId: string,
 ): Promise<
   {
     accountId: string;
@@ -1926,7 +1927,7 @@ export async function listAccountBalanceTotals(
 > {
   const rows = await getPrisma().transaction.groupBy({
     by: ["accountId"],
-    where: { userId },
+    where: { workspaceId },
     _count: { _all: true },
     _sum: { amount: true },
     _max: { operationDate: true },
@@ -1949,13 +1950,13 @@ export async function listAccountBalanceTotals(
  * operations dated strictly earlier, the starting point of a simulated balance.
  */
 export async function sumTransactionsByCurrency(
-  userId: string,
+  workspaceId: string,
   window: { before?: Date } = {},
 ): Promise<Map<Currency, Decimal>> {
   const rows = await getPrisma().transaction.groupBy({
     by: ["currency"],
     where: {
-      userId,
+      workspaceId,
       ...(window.before ? { operationDate: { lt: window.before } } : {}),
     },
     _sum: { amount: true },
@@ -1977,7 +1978,7 @@ export async function sumTransactionsByCurrency(
  * the import refuses to guess in that case rather than pretend the check ran.
  */
 export async function listImportCandidates(input: {
-  userId: string;
+  workspaceId: string;
   accountId: string;
   from: Date;
   to: Date;
@@ -1990,7 +1991,7 @@ export async function listImportCandidates(input: {
 > {
   const rows = await getPrisma().transaction.findMany({
     where: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       accountId: input.accountId,
       operationDate: { gte: input.from, lt: input.to },
     },
@@ -2020,13 +2021,13 @@ export async function listImportCandidates(input: {
  * only genuinely missing envelopes are created, and the counters say how many.
  */
 export async function copyBudgets(input: {
-  userId: string;
+  workspaceId: string;
   from: { year: number; month: number };
   to: { year: number; month: number };
 }): Promise<{ created: number; skipped: number }> {
   const prisma = getPrisma();
   const source = await prisma.budget.findMany({
-    where: { userId: input.userId, year: input.from.year, month: input.from.month },
+    where: { workspaceId: input.workspaceId, year: input.from.year, month: input.from.month },
     select: { categoryId: true, currency: true, amount: true },
   });
 
@@ -2036,7 +2037,7 @@ export async function copyBudgets(input: {
 
   const { count } = await prisma.budget.createMany({
     data: source.map((budget) => ({
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       categoryId: budget.categoryId,
       year: input.to.year,
       month: input.to.month,
@@ -2059,7 +2060,7 @@ export async function copyBudgets(input: {
  */
 export async function createImportedTransactions(
   rows: readonly {
-    userId: string;
+    workspaceId: string;
     accountId: string;
     categoryId: string | null;
     type: TransactionType;
@@ -2085,12 +2086,12 @@ export async function createImportedTransactions(
  * month that was never opened has no pending occurrences to project from.
  */
 export async function listPendingOccurrenceAmounts(
-  userId: string,
+  workspaceId: string,
   window: { from: Date; to: Date },
 ): Promise<{ accountId: string; type: ForecastType; amount: Decimal }[]> {
   const rows = await getPrisma().recurringOccurrence.findMany({
     where: {
-      userId,
+      workspaceId,
       status: "PENDING",
       date: { gte: window.from, lt: window.to },
     },

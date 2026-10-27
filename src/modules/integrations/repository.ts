@@ -28,10 +28,10 @@ function encryptionKey(): Buffer {
 }
 
 export async function listConnections(
-  userId: string,
+  workspaceId: string,
 ): Promise<ConnectionSummary[]> {
   const rows = await getPrisma().integrationConnection.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: { provider: "asc" },
     select: {
       id: true,
@@ -65,7 +65,7 @@ export async function listConnections(
 
 export type ConnectionWithSecret = {
   id: string;
-  userId: string;
+  workspaceId: string;
   provider: IntegrationProvider;
   instanceUrl: string;
   externalOwner: string | null;
@@ -74,14 +74,14 @@ export type ConnectionWithSecret = {
 
 /** Server-internal: the only function that decrypts a token. */
 export async function findConnectionForSync(
-  userId: string,
+  workspaceId: string,
   connectionId: string,
 ): Promise<ConnectionWithSecret | null> {
   const row = await getPrisma().integrationConnection.findFirst({
-    where: { id: connectionId, userId },
+    where: { id: connectionId, workspaceId },
     select: {
       id: true,
-      userId: true,
+      workspaceId: true,
       provider: true,
       instanceUrl: true,
       externalOwner: true,
@@ -95,7 +95,7 @@ export async function findConnectionForSync(
 
   return {
     id: row.id,
-    userId: row.userId,
+    workspaceId: row.workspaceId,
     provider: row.provider as IntegrationProvider,
     instanceUrl: row.instanceUrl,
     externalOwner: row.externalOwner,
@@ -119,7 +119,7 @@ function decryptStoredToken(ciphertext: string): string | null {
 }
 
 export async function upsertConnection(input: {
-  userId: string;
+  workspaceId: string;
   provider: IntegrationProvider;
   instanceUrl: string;
   externalOwner: string | null;
@@ -131,14 +131,14 @@ export async function upsertConnection(input: {
 
   const connection = await getPrisma().integrationConnection.upsert({
     where: {
-      userId_provider_instanceUrl: {
-        userId: input.userId,
+      workspaceId_provider_instanceUrl: {
+        workspaceId: input.workspaceId,
         provider: input.provider,
         instanceUrl: input.instanceUrl,
       },
     },
     create: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       provider: input.provider,
       instanceUrl: input.instanceUrl,
       externalOwner: input.externalOwner,
@@ -383,9 +383,9 @@ export async function saveIssues(input: {
  * set is returned: the page computes its indicators on all of it and only the
  * table is truncated.
  */
-export async function listIssues(userId: string): Promise<IssueSummary[]> {
+export async function listIssues(workspaceId: string): Promise<IssueSummary[]> {
   const rows = await getPrisma().issueSnapshot.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: [{ openedAt: "desc" }],
     select: {
       id: true,
@@ -557,10 +557,10 @@ export async function saveMilestones(input: {
  * page: they come from the stored issues, so they are exact for what is displayed and
  * can be compared honestly with the provider's own counters.
  */
-export async function listMilestones(userId: string): Promise<MilestoneSummary[]> {
+export async function listMilestones(workspaceId: string): Promise<MilestoneSummary[]> {
   const [rows, issues] = await Promise.all([
     getPrisma().milestoneSnapshot.findMany({
-      where: { connection: { userId } },
+      where: { connection: { workspaceId } },
       select: {
         id: true,
         repository: true,
@@ -574,7 +574,7 @@ export async function listMilestones(userId: string): Promise<MilestoneSummary[]
       },
     }),
     getPrisma().issueSnapshot.findMany({
-      where: { connection: { userId } },
+      where: { connection: { workspaceId } },
       select: { repository: true, milestone: true, assignees: true, kind: true },
     }),
   ]);
@@ -701,9 +701,9 @@ export type ProviderCacheSummary = {
   changedAt: Date;
 };
 
-export async function listProviderCache(userId: string): Promise<ProviderCacheSummary[]> {
+export async function listProviderCache(workspaceId: string): Promise<ProviderCacheSummary[]> {
   const rows = await getPrisma().providerCacheEntry.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: [{ repository: "asc" }, { kind: "asc" }],
     select: {
       id: true,
@@ -946,11 +946,11 @@ export async function finishSyncRun(
  * Bounded by `limit`: the page reads one page of history, not the whole table.
  */
 export async function listSyncRuns(
-  userId: string,
+  workspaceId: string,
   limit = 50,
 ): Promise<SyncRunSummary[]> {
   const rows = await getPrisma().syncRun.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: { startedAt: "desc" },
     take: limit,
     select: {
@@ -999,13 +999,13 @@ export async function listSyncRuns(
  * the owner's connections. Bounded by the cutoff and safe to re-run.
  */
 export async function pruneSyncRuns(input: {
-  userId: string;
+  workspaceId: string;
   olderThan: Date;
 }): Promise<number> {
   const prisma = getPrisma();
 
   const successes = await prisma.syncRun.findMany({
-    where: { connection: { userId: input.userId }, status: "SUCCESS" },
+    where: { connection: { workspaceId: input.workspaceId }, status: "SUCCESS" },
     orderBy: { startedAt: "desc" },
     select: { id: true, connectionId: true },
   });
@@ -1021,7 +1021,7 @@ export async function pruneSyncRuns(input: {
 
   const deleted = await prisma.syncRun.deleteMany({
     where: {
-      connection: { userId: input.userId },
+      connection: { workspaceId: input.workspaceId },
       startedAt: { lt: input.olderThan },
       // An empty list means no successful run exists yet: nothing to protect.
       ...(keptIds.length > 0 ? { id: { notIn: keptIds } } : {}),

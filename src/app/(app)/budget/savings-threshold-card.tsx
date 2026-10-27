@@ -20,11 +20,11 @@ import {
  * constants and edge cases live in `src/modules/budget/savings.ts` and are documented
  * in `docs/architecture/overview.md`.
  */
-export async function SavingsThresholdCard({ userId }: { userId: string }) {
+export async function SavingsThresholdCard({ workspaceId }: { workspaceId: string }) {
   const [entries, accounts, balanceTotals] = await Promise.all([
-    listRecurringEntries(userId),
-    listAccounts(userId),
-    listAccountBalanceTotals(userId),
+    listRecurringEntries(workspaceId),
+    listAccounts(workspaceId),
+    listAccountBalanceTotals(workspaceId),
   ]);
 
   const currencyByAccount = new Map(accounts.map((account) => [account.id, account.currency]));

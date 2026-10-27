@@ -664,13 +664,18 @@ beside its fields.
   (`budget`, `real-estate`, `development`, `ai-costs`, `agents`, `micro-business`,
   `profitability`, `automation`, `family`). A module is active in a workspace when its
   `WorkspaceModule` row is enabled and all its prerequisites are active
-  (`profitability` needs `budget` and `real-estate`). The module's pages and Server
-  Actions call `requireModule(key)`, which answers 404 otherwise; its exports answer a
-  404 JSON body. The navigation is built by the server layout from the active modules.
-  Disabling only flips `enabled`: records and configuration stay. Enabling writes the
-  activation row only. The migration enables `budget`, `real-estate` and `development`
-  on every existing workspace. The dashboard, the alerts and the account page are not
-  modules: they are not gated yet (dashboard cards: M7-03).
+  (`profitability` needs `budget` and `real-estate`). The module's Server Actions call
+  `requireModule(key)`, which answers 404 otherwise; its exports answer a 404 JSON body.
+  Its pages check `hasModule` and render `ModuleDisabled` instead (a direct link explains
+  the state and reads nothing). The navigation is built by the server layout from the
+  active modules. Disabling only flips `enabled`: records and configuration stay.
+  Enabling writes the activation row only. The migration enables `budget`,
+  `real-estate` and `development` on every existing workspace. The dashboard, the alerts
+  and the account page are not modules, but the dashboard reads and shows only the
+  sections of active modules, and the alert page, banner and export hide the alerts of
+  inactive ones (`ALERT_KIND_MODULES`; the stored episodes are left untouched). The
+  `/modules` page lets an `OWNER` or `ADMIN` enable or disable the modules that have a
+  page, with their prerequisites and what disabling hides.
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.

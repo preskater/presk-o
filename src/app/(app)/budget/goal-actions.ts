@@ -55,14 +55,14 @@ type ResolvedGoalInput = {
  * the goal's currency") — the app never converts between currencies.
  */
 async function resolveGoalInput(
-  userId: string,
+  workspaceId: string,
   input: ValidatedGoalInput,
 ): Promise<{ ok: true; input: ResolvedGoalInput } | { ok: false; result: ActionResult }> {
   if (input.accountId === null) {
     return { ok: true, input: { ...input, accountId: null } };
   }
 
-  const account = await findAccount(userId, input.accountId);
+  const account = await findAccount(workspaceId, input.accountId);
   if (!account) {
     return { ok: false, result: rejectedResult("accountId", "Compte introuvable.") };
   }
@@ -90,12 +90,12 @@ export async function createGoalAction(values: unknown): Promise<ActionResult> {
   }
 
   try {
-    const resolved = await resolveGoalInput(user.id, parsed.data);
+    const resolved = await resolveGoalInput(user.workspace.id, parsed.data);
     if (!resolved.ok) {
       return resolved.result;
     }
 
-    await createGoal({ userId: user.id, ...resolved.input });
+    await createGoal({ workspaceId: user.workspace.id, ...resolved.input });
   } catch (error) {
     return unexpectedResult("createGoal", error);
   }
@@ -116,12 +116,12 @@ export async function updateGoalAction(values: unknown): Promise<ActionResult> {
   const { id, ...fields } = parsed.data;
 
   try {
-    const resolved = await resolveGoalInput(user.id, fields);
+    const resolved = await resolveGoalInput(user.workspace.id, fields);
     if (!resolved.ok) {
       return resolved.result;
     }
 
-    const updated = await updateGoal(user.id, id, resolved.input);
+    const updated = await updateGoal(user.workspace.id, id, resolved.input);
     if (!updated) {
       return rejectedResult("id", "Objectif introuvable : il a peut-être été supprimé entre-temps.");
     }
@@ -143,7 +143,7 @@ export async function deleteGoalAction(values: unknown): Promise<ActionResult> {
   }
 
   try {
-    const deleted = await deleteGoal(user.id, parsed.data.id);
+    const deleted = await deleteGoal(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Objectif introuvable : il a peut-être déjà été supprimé.");
     }
@@ -173,7 +173,7 @@ export async function addGoalContributionAction(values: unknown): Promise<Action
   }
 
   try {
-    const goal = await findGoal(user.id, parsed.data.goalId);
+    const goal = await findGoal(user.workspace.id, parsed.data.goalId);
     if (!goal) {
       return rejectedResult("goalId", "Objectif introuvable : il a peut-être été supprimé entre-temps.");
     }
@@ -183,7 +183,7 @@ export async function addGoalContributionAction(values: unknown): Promise<Action
     }
 
     await createGoalContribution({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       goalId: goal.id,
       amount: parsed.data.amount,
       date: parsed.data.date,
@@ -207,7 +207,7 @@ export async function deleteGoalContributionAction(values: unknown): Promise<Act
   }
 
   try {
-    const deleted = await deleteGoalContribution(user.id, parsed.data.id);
+    const deleted = await deleteGoalContribution(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Contribution introuvable : elle a peut-être déjà été supprimée.");
     }
