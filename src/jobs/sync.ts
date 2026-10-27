@@ -16,6 +16,7 @@ import {
   markSyncFailure,
   markSyncSuccess,
   saveCacheChecks,
+  saveCiRuns,
   saveIssues,
   saveMilestones,
   saveSnapshots,
@@ -91,11 +92,11 @@ export type SyncDependencies = {
 };
 
 export async function synchroniseConnection(
-  userId: string,
+  workspaceId: string,
   connectionId: string,
   dependencies: SyncDependencies = {},
 ): Promise<SyncRunResult> {
-  const connection = await findConnectionForSync(userId, connectionId);
+  const connection = await findConnectionForSync(workspaceId, connectionId);
 
   if (!connection) {
     return {
@@ -227,6 +228,33 @@ export async function synchroniseConnection(
       updated += savedMilestones.updated;
     }
 
+    // CI runs (DA-03), same repository selection again. A repository whose CI is
+    // refused is recorded as unavailable on its own and does not make the run partial:
+    // the issues and milestones it was synchronised for were read in full.
+    const ci = await adapter.listCiRuns({
+      token: connection.token,
+      instanceUrl: connection.instanceUrl,
+      owner: connection.externalOwner,
+      projects: outcome.projects,
+      fetchImpl: retryingFetch.fetchImpl,
+    });
+
+    if (ci.supported) {
+      const savedCi = await saveCiRuns({
+        connectionId: connection.id,
+        provider: connection.provider,
+        results: ci.repositories,
+        trackedRepositories: outcome.projects.map((project) => project.name),
+        fetchedAt: ci.fetchedAt,
+      });
+      fetched += ci.repositories.reduce(
+        (sum, result) => sum + (result.read ? result.runs.length : 0),
+        0,
+      );
+      created += savedCi.created;
+      updated += savedCi.updated;
+    }
+
     // Both scans cover the same repository selection, so their skipped and failed
     // counts describe the same set of repositories: keep the maximum instead of
     // counting the same repository twice. Either number means "not read" — the data
@@ -295,14 +323,14 @@ function readInFull(checks: readonly ResourceCheck[]): string[] {
 
 /** One run for every connection of the owner; one failure never blocks the others. */
 export async function synchroniseAllConnections(
-  userId: string,
+  workspaceId: string,
   dependencies: SyncDependencies = {},
 ): Promise<SyncRunResult[]> {
-  const connections = await listConnections(userId);
+  const connections = await listConnections(workspaceId);
   const results: SyncRunResult[] = [];
 
   for (const connection of connections) {
-    results.push(await synchroniseConnection(userId, connection.id, dependencies));
+    results.push(await synchroniseConnection(workspaceId, connection.id, dependencies));
   }
 
   return results;

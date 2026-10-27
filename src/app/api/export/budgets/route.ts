@@ -1,4 +1,5 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { createCsvResponse, toCsv, type CsvColumn } from "@/lib/csv";
 import { currentMonthKey, isValidMonthKey, parseMonthKey } from "@/lib/dates";
 import { listBudgets } from "@/modules/budget/repository";
@@ -33,13 +34,16 @@ export async function GET(request: Request): Promise<Response> {
   if (!user) {
     return unauthorizedResponse();
   }
+  if (!hasModule(user.workspace, "budget")) {
+    return moduleUnavailableResponse();
+  }
 
   const url = new URL(request.url);
   const monthParam = url.searchParams.get("month");
   const monthKey = isValidMonthKey(monthParam) ? monthParam : currentMonthKey();
   const { year, month } = parseMonthKey(monthKey);
 
-  const budgets = await listBudgets(user.id, { year, month });
+  const budgets = await listBudgets(user.workspace.id, { year, month });
 
   const rows: BudgetRow[] = budgets.map((budget) => ({
     month: monthKey,

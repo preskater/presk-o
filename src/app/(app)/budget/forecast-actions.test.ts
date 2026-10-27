@@ -13,7 +13,7 @@ const createTransactionMock = vi.fn();
 const decideRecurringOccurrenceMock = vi.fn();
 const revalidatePathMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/budget/repository", () => ({
   findAccount: (...args: unknown[]) => findAccountMock(...args),
   findCategory: (...args: unknown[]) => findCategoryMock(...args),
@@ -44,7 +44,12 @@ const {
  * account and category lookups — that is what makes these tests cover the shared
  * ownership rules rather than a parallel copy of them.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 const ACCOUNT = { id: "account-1", name: "Compte courant", type: "CHECKING", currency: "EUR" };
 const EXPENSE_CATEGORY = { id: "category-1", name: "Logement", kind: "EXPENSE" };
@@ -107,7 +112,7 @@ describe("confirmRecurringOccurrenceAction", () => {
 
     expect(createTransactionMock).toHaveBeenCalledTimes(1);
     const written = createTransactionMock.mock.calls[0][0] as {
-      userId: string;
+      workspaceId: string;
       accountId: string;
       categoryId: string;
       type: string;
@@ -118,7 +123,7 @@ describe("confirmRecurringOccurrenceAction", () => {
       externalRef: string;
     };
 
-    expect(written.userId).toBe(OWNER.id);
+    expect(written.workspaceId).toBe(OWNER.workspace.id);
     expect(written.accountId).toBe("account-1");
     expect(written.categoryId).toBe("category-1");
     expect(written.type).toBe("EXPENSE");
@@ -132,7 +137,7 @@ describe("confirmRecurringOccurrenceAction", () => {
     // Stable reference: the unique (account, reference) refuses a double booking.
     expect(written.externalRef).toBe("forecast:occ-1");
 
-    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.id, "occ-1", {
+    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.workspace.id, "occ-1", {
       status: "CONFIRMED",
       transactionId: "tx-1",
     });
@@ -203,7 +208,7 @@ describe("skipRecurringOccurrenceAction", () => {
     const result = await skipRecurringOccurrenceAction({ id: "occ-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.id, "occ-1", {
+    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.workspace.id, "occ-1", {
       status: "SKIPPED",
     });
     // The whole point of a forecast: passing it writes a decision, never a line.
@@ -226,7 +231,7 @@ describe("dismissRecurringOccurrenceAction", () => {
     const result = await dismissRecurringOccurrenceAction({ id: "occ-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.id, "occ-1", {
+    expect(decideRecurringOccurrenceMock).toHaveBeenCalledWith(OWNER.workspace.id, "occ-1", {
       status: "DISMISSED",
     });
     expect(createTransactionMock).not.toHaveBeenCalled();
@@ -250,7 +255,7 @@ describe("createRecurringEntryAction", () => {
     expect(createRecurringEntryMock).toHaveBeenCalledTimes(1);
 
     const written = createRecurringEntryMock.mock.calls[0][0] as {
-      userId: string;
+      workspaceId: string;
       accountId: string;
       categoryId: string;
       type: string;
@@ -260,7 +265,7 @@ describe("createRecurringEntryAction", () => {
       endDate: Date | null;
     };
 
-    expect(written.userId).toBe(OWNER.id);
+    expect(written.workspaceId).toBe(OWNER.workspace.id);
     expect(written.accountId).toBe("account-1");
     expect(written.categoryId).toBe("category-1");
     expect(written.type).toBe("EXPENSE");
@@ -311,7 +316,7 @@ describe("deleteRecurringEntryAction", () => {
     const result = await deleteRecurringEntryAction({ id: "entry-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(deleteRecurringEntryMock).toHaveBeenCalledWith(OWNER.id, "entry-1");
+    expect(deleteRecurringEntryMock).toHaveBeenCalledWith(OWNER.workspace.id, "entry-1");
     expect(revalidatePathMock).toHaveBeenCalledWith("/budget");
   });
 

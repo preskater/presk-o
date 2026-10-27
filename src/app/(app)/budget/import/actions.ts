@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { invalidResult, unexpectedResult } from "@/lib/actions";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { toDateOnlyString } from "@/lib/dates";
 import {
   IMPORT_SCAN_LIMIT,
@@ -37,7 +37,7 @@ function duplicateKey(date: Date, label: string, amount: string): string {
 export async function importTransactionsAction(
   values: unknown,
 ): Promise<ImportActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("budget");
 
   const parsed = importSubmissionSchema.safeParse(values);
   if (!parsed.success) {
@@ -54,7 +54,7 @@ export async function importTransactionsAction(
   const input = parsed.data;
 
   try {
-    const account = await findManagedAccount(user.id, input.accountId);
+    const account = await findManagedAccount(user.workspace.id, input.accountId);
     if (!account) {
       return {
         status: "invalid",
@@ -89,13 +89,13 @@ export async function importTransactionsAction(
 
     const [candidates, categories] = await Promise.all([
       listImportCandidates({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         accountId: account.id,
         from: minDate,
         to: scanEnd,
         take: IMPORT_SCAN_LIMIT,
       }),
-      listCategories(user.id),
+      listCategories(user.workspace.id),
     ]);
 
     if (candidates.truncated) {
@@ -169,7 +169,7 @@ export async function importTransactionsAction(
       }
 
       toInsert.push({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         accountId: account.id,
         categoryId,
         type: kind,

@@ -11,6 +11,8 @@ import {
   thClass,
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
@@ -78,7 +80,11 @@ export default async function PropertyDetailPage({
 }) {
   const { id } = await params;
   const user = await requireUser();
-  const property = await getPropertyDetail(user.id, id);
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "real-estate")) {
+    return <ModuleDisabled moduleKey="real-estate" workspace={user.workspace} />;
+  }
+  const property = await getPropertyDetail(user.workspace.id, id);
 
   if (!property) {
     notFound();

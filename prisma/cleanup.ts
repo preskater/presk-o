@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const result = await cleanUpSyncRuns();
 
   console.log(
-    `Synchronisation history: ${result.deleted} run(s) deleted for ${result.owners} owner(s) (retention: ${SYNC_RUN_RETENTION_DAYS} days).`,
+    `Synchronisation history: ${result.deleted} run(s) deleted for ${result.workspaces} workspace(s) (retention: ${SYNC_RUN_RETENTION_DAYS} days).`,
   );
 }
 

@@ -1,4 +1,5 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { createCsvResponse, toCsv, type CsvColumn } from "@/lib/csv";
 import { toDateOnlyString } from "@/lib/dates";
 import { listProperties } from "@/modules/real-estate/repository";
@@ -53,8 +54,11 @@ export async function GET(): Promise<Response> {
   if (!user) {
     return unauthorizedResponse();
   }
+  if (!hasModule(user.workspace, "real-estate")) {
+    return moduleUnavailableResponse();
+  }
 
-  const properties = await listProperties(user.id);
+  const properties = await listProperties(user.workspace.id);
 
   const rows: PropertyRow[] = properties.map((property) => ({
     name: property.name,

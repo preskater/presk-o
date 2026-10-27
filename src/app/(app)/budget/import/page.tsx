@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Card, Notice, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { listAccounts } from "@/modules/budget/repository";
 import { CsvImporter } from "./csv-importer";
 
@@ -16,7 +18,11 @@ export const dynamic = "force-dynamic";
  */
 export default async function BudgetImportPage() {
   const user = await requireUser();
-  const accounts = await listAccounts(user.id);
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "budget")) {
+    return <ModuleDisabled moduleKey="budget" workspace={user.workspace} />;
+  }
+  const accounts = await listAccounts(user.workspace.id);
 
   return (
     <>

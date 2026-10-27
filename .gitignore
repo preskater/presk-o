@@ -45,4 +45,8 @@ next-env.d.ts
 
 /src/generated/prisma
 
-graphify-out
+*override*.yaml
+*override*.yml
+
+# graphify knowledge graph output
+graphify-out/

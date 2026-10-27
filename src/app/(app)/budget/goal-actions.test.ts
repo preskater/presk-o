@@ -8,7 +8,7 @@ const updateGoalMock = vi.fn();
 const deleteGoalMock = vi.fn();
 const revalidatePathMock = vi.fn();
 
-vi.mock("@/lib/auth/guard", () => ({ requireUser: () => requireUserMock() }));
+vi.mock("@/lib/auth/guard", () => ({ requireModule: (key: string) => requireUserMock(key) }));
 vi.mock("@/modules/budget/repository", () => ({
   findAccount: (...args: unknown[]) => findAccountMock(...args),
   createGoal: (...args: unknown[]) => createGoalMock(...args),
@@ -28,7 +28,12 @@ const { createGoalAction, updateGoalAction, deleteGoalAction } = await import(".
  * owner, a linked account must be one of that owner's, in the goal's currency, and a
  * refusal writes nothing.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 const ACCOUNT = { id: "account-1", name: "Compte courant", type: "CHECKING", currency: "EUR" };
 const ACCOUNT_USD = { id: "account-2", name: "Compte dollars", type: "SAVINGS", currency: "USD" };
@@ -61,7 +66,7 @@ describe("createGoalAction", () => {
 
     expect(createGoalMock).toHaveBeenCalledTimes(1);
     const written = createGoalMock.mock.calls[0][0] as {
-      userId: string;
+      workspaceId: string;
       name: string;
       targetAmount: Decimal;
       currency: string;
@@ -71,7 +76,7 @@ describe("createGoalAction", () => {
       accountId: string | null;
     };
 
-    expect(written.userId).toBe(OWNER.id);
+    expect(written.workspaceId).toBe(OWNER.workspace.id);
     expect(written.name).toBe("Apport immobilier");
     expect(written.targetAmount.toFixed(2)).toBe("1000.00");
     expect(written.currentAmount?.toFixed(2)).toBe("300.00");
@@ -86,7 +91,7 @@ describe("createGoalAction", () => {
     const result = await createGoalAction({ ...VALID_PAYLOAD, accountId: "account-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(findAccountMock).toHaveBeenCalledWith(OWNER.id, "account-1");
+    expect(findAccountMock).toHaveBeenCalledWith(OWNER.workspace.id, "account-1");
 
     const written = createGoalMock.mock.calls[0][0] as {
       currentAmount: Decimal | null;
@@ -167,7 +172,7 @@ describe("updateGoalAction", () => {
 
     expect(result).toEqual({ status: "ok" });
     expect(updateGoalMock).toHaveBeenCalledTimes(1);
-    expect(updateGoalMock.mock.calls[0][0]).toBe(OWNER.id);
+    expect(updateGoalMock.mock.calls[0][0]).toBe(OWNER.workspace.id);
     expect(updateGoalMock.mock.calls[0][1]).toBe("goal-1");
 
     const written = updateGoalMock.mock.calls[0][2] as { status: string; accountId: string | null };
@@ -199,7 +204,7 @@ describe("deleteGoalAction", () => {
     const result = await deleteGoalAction({ id: "goal-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(deleteGoalMock).toHaveBeenCalledWith(OWNER.id, "goal-1");
+    expect(deleteGoalMock).toHaveBeenCalledWith(OWNER.workspace.id, "goal-1");
   });
 
   it("answers not-found for a goal that is already gone", async () => {

@@ -1,7 +1,7 @@
 import { getPrisma } from "@/lib/db";
 import { decodeEncryptionKey, decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getServerEnv } from "@/lib/env";
-import type { ResourceCheck } from "./adapter";
+import type { ResourceCheck, CiRepositoryResult } from "./adapter";
 import { CACHE_MAX_AGE_DAYS, type CacheEntryLike } from "./cache";
 import {
   describeInstance,
@@ -28,10 +28,10 @@ function encryptionKey(): Buffer {
 }
 
 export async function listConnections(
-  userId: string,
+  workspaceId: string,
 ): Promise<ConnectionSummary[]> {
   const rows = await getPrisma().integrationConnection.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: { provider: "asc" },
     select: {
       id: true,
@@ -65,7 +65,7 @@ export async function listConnections(
 
 export type ConnectionWithSecret = {
   id: string;
-  userId: string;
+  workspaceId: string;
   provider: IntegrationProvider;
   instanceUrl: string;
   externalOwner: string | null;
@@ -74,14 +74,14 @@ export type ConnectionWithSecret = {
 
 /** Server-internal: the only function that decrypts a token. */
 export async function findConnectionForSync(
-  userId: string,
+  workspaceId: string,
   connectionId: string,
 ): Promise<ConnectionWithSecret | null> {
   const row = await getPrisma().integrationConnection.findFirst({
-    where: { id: connectionId, userId },
+    where: { id: connectionId, workspaceId },
     select: {
       id: true,
-      userId: true,
+      workspaceId: true,
       provider: true,
       instanceUrl: true,
       externalOwner: true,
@@ -95,7 +95,7 @@ export async function findConnectionForSync(
 
   return {
     id: row.id,
-    userId: row.userId,
+    workspaceId: row.workspaceId,
     provider: row.provider as IntegrationProvider,
     instanceUrl: row.instanceUrl,
     externalOwner: row.externalOwner,
@@ -119,7 +119,7 @@ function decryptStoredToken(ciphertext: string): string | null {
 }
 
 export async function upsertConnection(input: {
-  userId: string;
+  workspaceId: string;
   provider: IntegrationProvider;
   instanceUrl: string;
   externalOwner: string | null;
@@ -131,14 +131,14 @@ export async function upsertConnection(input: {
 
   const connection = await getPrisma().integrationConnection.upsert({
     where: {
-      userId_provider_instanceUrl: {
-        userId: input.userId,
+      workspaceId_provider_instanceUrl: {
+        workspaceId: input.workspaceId,
         provider: input.provider,
         instanceUrl: input.instanceUrl,
       },
     },
     create: {
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       provider: input.provider,
       instanceUrl: input.instanceUrl,
       externalOwner: input.externalOwner,
@@ -383,9 +383,9 @@ export async function saveIssues(input: {
  * set is returned: the page computes its indicators on all of it and only the
  * table is truncated.
  */
-export async function listIssues(userId: string): Promise<IssueSummary[]> {
+export async function listIssues(workspaceId: string): Promise<IssueSummary[]> {
   const rows = await getPrisma().issueSnapshot.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: [{ openedAt: "desc" }],
     select: {
       id: true,
@@ -427,6 +427,35 @@ export async function listIssues(userId: string): Promise<IssueSummary[]> {
     labels: row.labels,
     openedAt: row.openedAt,
     activityAt: row.activityAt,
+  }));
+}
+
+export type ProjectSummary = {
+  connectionId: string;
+  name: string;
+  provider: IntegrationProvider;
+  /** Link to the repository at the provider. */
+  url: string;
+  metrics: Record<string, unknown> | null;
+};
+
+/** Stored projects with the provider metrics the activity and health indicators read. */
+export async function listProjects(userId: string): Promise<ProjectSummary[]> {
+  const rows = await getPrisma().projectSnapshot.findMany({
+    where: { connection: { userId } },
+    orderBy: { name: "asc" },
+    select: { name: true, provider: true, externalUrl: true, metrics: true, connectionId: true },
+  });
+
+  return rows.map((row) => ({
+    connectionId: row.connectionId,
+    name: row.name,
+    provider: row.provider as IntegrationProvider,
+    url: row.externalUrl,
+    metrics:
+      typeof row.metrics === "object" && row.metrics !== null && !Array.isArray(row.metrics)
+        ? (row.metrics as Record<string, unknown>)
+        : null,
   }));
 }
 
@@ -528,10 +557,10 @@ export async function saveMilestones(input: {
  * page: they come from the stored issues, so they are exact for what is displayed and
  * can be compared honestly with the provider's own counters.
  */
-export async function listMilestones(userId: string): Promise<MilestoneSummary[]> {
+export async function listMilestones(workspaceId: string): Promise<MilestoneSummary[]> {
   const [rows, issues] = await Promise.all([
     getPrisma().milestoneSnapshot.findMany({
-      where: { connection: { userId } },
+      where: { connection: { workspaceId } },
       select: {
         id: true,
         repository: true,
@@ -545,7 +574,7 @@ export async function listMilestones(userId: string): Promise<MilestoneSummary[]
       },
     }),
     getPrisma().issueSnapshot.findMany({
-      where: { connection: { userId } },
+      where: { connection: { workspaceId } },
       select: { repository: true, milestone: true, assignees: true, kind: true },
     }),
   ]);
@@ -672,9 +701,9 @@ export type ProviderCacheSummary = {
   changedAt: Date;
 };
 
-export async function listProviderCache(userId: string): Promise<ProviderCacheSummary[]> {
+export async function listProviderCache(workspaceId: string): Promise<ProviderCacheSummary[]> {
   const rows = await getPrisma().providerCacheEntry.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: [{ repository: "asc" }, { kind: "asc" }],
     select: {
       id: true,
@@ -696,6 +725,175 @@ export async function listProviderCache(userId: string): Promise<ProviderCacheSu
     hasValidator: Boolean(row.etag || row.lastModified),
     checkedAt: row.checkedAt,
     changedAt: row.changedAt,
+  }));
+}
+
+/**
+ * Stores the CI runs of one synchronisation (DA-03).
+ *
+ * The table holds current state, bounded by construction (repositories read × one
+ * page): for every repository read, the runs it returned replace the previous ones;
+ * for a refused repository, its runs are dropped and the refusal is recorded on the
+ * project, so the interface shows "unavailable" rather than outdated results. Runs of
+ * repositories that are no longer tracked are dropped too. A repository left out by
+ * the bound keeps its last read, displayed with its date.
+ */
+export async function saveCiRuns(input: {
+  connectionId: string;
+  provider: IntegrationProvider;
+  results: readonly CiRepositoryResult[];
+  /** Names of every project of this run, to drop runs of untracked repositories. */
+  trackedRepositories: readonly string[];
+  fetchedAt: Date;
+}): Promise<{ created: number; updated: number }> {
+  const prisma = getPrisma();
+
+  const existing = new Set(
+    (
+      await prisma.ciRunSnapshot.findMany({
+        where: { connectionId: input.connectionId },
+        select: { externalId: true },
+      })
+    ).map((row) => row.externalId),
+  );
+  let created = 0;
+  let saved = 0;
+
+  for (const result of input.results) {
+    const runs = result.read ? result.runs : [];
+
+    for (const run of runs) {
+      if (!existing.has(run.externalId)) {
+        created += 1;
+      }
+      saved += 1;
+      const data = {
+        provider: input.provider,
+        repository: run.repository,
+        workflowName: run.workflowName,
+        branch: run.branch,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.url,
+        startedAt: run.startedAt,
+        runUpdatedAt: run.updatedAt,
+        fetchedAt: input.fetchedAt,
+      };
+
+      await prisma.ciRunSnapshot.upsert({
+        where: {
+          connectionId_externalId: {
+            connectionId: input.connectionId,
+            externalId: run.externalId,
+          },
+        },
+        create: { connectionId: input.connectionId, externalId: run.externalId, ...data },
+        update: data,
+      });
+    }
+
+    await prisma.ciRunSnapshot.deleteMany({
+      where: {
+        connectionId: input.connectionId,
+        repository: result.repository,
+        externalId: { notIn: runs.map((run) => run.externalId) },
+      },
+    });
+    await prisma.projectSnapshot.updateMany({
+      where: { connectionId: input.connectionId, name: result.repository },
+      data: {
+        ciCheckedAt: input.fetchedAt,
+        ciError: result.read ? null : result.errorCode,
+      },
+    });
+  }
+
+  await prisma.ciRunSnapshot.deleteMany({
+    where: {
+      connectionId: input.connectionId,
+      repository: { notIn: [...input.trackedRepositories] },
+    },
+  });
+
+  return { created, updated: saved - created };
+}
+
+/** CI state of every stored project, as the CI card reads it (DA-03). */
+export type CiRepositorySummary = {
+  repository: string;
+  provider: IntegrationProvider;
+  url: string;
+  ciCheckedAt: Date | null;
+  ciError: string | null;
+  runs: CiRunSummary[];
+};
+
+export type CiRunSummary = {
+  id: string;
+  repository: string;
+  workflowName: string;
+  branch: string | null;
+  status: string;
+  conclusion: string | null;
+  url: string;
+  startedAt: Date;
+  runUpdatedAt: Date;
+};
+
+export async function listCiRepositories(userId: string): Promise<CiRepositorySummary[]> {
+  const [projects, runs] = await Promise.all([
+    getPrisma().projectSnapshot.findMany({
+      where: { connection: { userId } },
+      orderBy: { name: "asc" },
+      select: {
+        name: true,
+        provider: true,
+        externalUrl: true,
+        ciCheckedAt: true,
+        ciError: true,
+        connectionId: true,
+      },
+    }),
+    getPrisma().ciRunSnapshot.findMany({
+      where: { connection: { userId } },
+      orderBy: { startedAt: "desc" },
+      select: {
+        id: true,
+        connectionId: true,
+        repository: true,
+        workflowName: true,
+        branch: true,
+        status: true,
+        conclusion: true,
+        url: true,
+        startedAt: true,
+        runUpdatedAt: true,
+      },
+    }),
+  ]);
+
+  return projects.map((project) => ({
+    repository: project.name,
+    provider: project.provider as IntegrationProvider,
+    url: project.externalUrl,
+    ciCheckedAt: project.ciCheckedAt,
+    ciError: project.ciError,
+    runs: runs
+      .filter(
+        (run) =>
+          run.connectionId === project.connectionId && run.repository === project.name,
+      )
+      .map((run) => ({
+        id: run.id,
+        repository: run.repository,
+        workflowName: run.workflowName,
+        branch: run.branch,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.url,
+        startedAt: run.startedAt,
+        runUpdatedAt: run.runUpdatedAt,
+      })),
   }));
 }
 
@@ -748,11 +946,11 @@ export async function finishSyncRun(
  * Bounded by `limit`: the page reads one page of history, not the whole table.
  */
 export async function listSyncRuns(
-  userId: string,
+  workspaceId: string,
   limit = 50,
 ): Promise<SyncRunSummary[]> {
   const rows = await getPrisma().syncRun.findMany({
-    where: { connection: { userId } },
+    where: { connection: { workspaceId } },
     orderBy: { startedAt: "desc" },
     take: limit,
     select: {
@@ -801,13 +999,13 @@ export async function listSyncRuns(
  * the owner's connections. Bounded by the cutoff and safe to re-run.
  */
 export async function pruneSyncRuns(input: {
-  userId: string;
+  workspaceId: string;
   olderThan: Date;
 }): Promise<number> {
   const prisma = getPrisma();
 
   const successes = await prisma.syncRun.findMany({
-    where: { connection: { userId: input.userId }, status: "SUCCESS" },
+    where: { connection: { workspaceId: input.workspaceId }, status: "SUCCESS" },
     orderBy: { startedAt: "desc" },
     select: { id: true, connectionId: true },
   });
@@ -823,7 +1021,7 @@ export async function pruneSyncRuns(input: {
 
   const deleted = await prisma.syncRun.deleteMany({
     where: {
-      connection: { userId: input.userId },
+      connection: { workspaceId: input.workspaceId },
       startedAt: { lt: input.olderThan },
       // An empty list means no successful run exists yet: nothing to protect.
       ...(keptIds.length > 0 ? { id: { notIn: keptIds } } : {}),

@@ -1,4 +1,5 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
 import {
   currentMonthKey,
@@ -56,6 +57,9 @@ export async function GET(request: Request): Promise<Response> {
   if (!user) {
     return unauthorizedResponse();
   }
+  if (!hasModule(user.workspace, "budget")) {
+    return moduleUnavailableResponse();
+  }
 
   const url = new URL(request.url);
   const allScope = url.searchParams.get("all") === "1";
@@ -87,7 +91,7 @@ export async function GET(request: Request): Promise<Response> {
     | undefined;
   const rawReconciled = url.searchParams.get("reconciled");
 
-  const transactions = await listTransactions(user.id, {
+  const transactions = await listTransactions(user.workspace.id, {
     ...window,
     accountId: url.searchParams.get("account") ?? undefined,
     categoryId: url.searchParams.get("category") ?? undefined,

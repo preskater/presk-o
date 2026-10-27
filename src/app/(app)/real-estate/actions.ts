@@ -8,7 +8,8 @@ import {
   unexpectedResult,
   type ActionResult,
 } from "@/lib/actions";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { recordIdInput } from "@/lib/validation";
 import { DEFAULT_CURRENCY, formatMoney } from "@/lib/money";
 import {
@@ -42,7 +43,7 @@ import { findTransactionRef } from "@/modules/budget/repository";
  */
 
 export async function createPropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertyInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -51,7 +52,7 @@ export async function createPropertyAction(values: unknown): Promise<ActionResul
 
   try {
     await createProperty({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       name: parsed.data.name,
       address: parsed.data.address,
       occupancy: parsed.data.occupancy,
@@ -84,7 +85,7 @@ export async function createPropertyAction(values: unknown): Promise<ActionResul
  * The update therefore never clears an existing sale.
  */
 export async function updatePropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertyUpdateSchema.safeParse(values);
   if (!parsed.success) {
@@ -93,14 +94,14 @@ export async function updatePropertyAction(values: unknown): Promise<ActionResul
 
   const input = parsed.data;
 
-  const existing = await findProperty(user.id, input.id);
+  const existing = await findProperty(user.workspace.id, input.id);
   if (!existing) {
     return rejectedResult("id", "Bien introuvable : il a peut-être déjà été supprimé.");
   }
 
   try {
     const { id, ...fields } = input;
-    const updated = await updateProperty(user.id, id, {
+    const updated = await updateProperty(user.workspace.id, id, {
       ...fields,
       currency: fields.currency ?? DEFAULT_CURRENCY,
     });
@@ -127,7 +128,7 @@ export async function updatePropertyAction(values: unknown): Promise<ActionResul
  * keeps the record; this action is for a property that should never have been tracked.
  */
 export async function deletePropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = recordIdInput.safeParse(values);
   if (!parsed.success) {
@@ -135,7 +136,7 @@ export async function deletePropertyAction(values: unknown): Promise<ActionResul
   }
 
   try {
-    const deleted = await deleteProperty(user.id, parsed.data.id);
+    const deleted = await deleteProperty(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Bien introuvable : il a peut-être déjà été supprimé.");
     }
@@ -158,7 +159,7 @@ export async function deletePropertyAction(values: unknown): Promise<ActionResul
  * It stays "unknown" (with its reason) when a figure it needs was never entered.
  */
 export async function sellPropertyAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = propertySaleInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -167,7 +168,7 @@ export async function sellPropertyAction(values: unknown): Promise<ActionResult>
 
   const input = parsed.data;
 
-  const detail = await getPropertyDetail(user.id, input.id);
+  const detail = await getPropertyDetail(user.workspace.id, input.id);
   if (!detail) {
     return rejectedResult("id", "Bien introuvable : il a peut-être déjà été supprimé.");
   }
@@ -194,7 +195,7 @@ export async function sellPropertyAction(values: unknown): Promise<ActionResult>
       : null;
 
   try {
-    const saved = await savePropertySale(user.id, input.id, {
+    const saved = await savePropertySale(user.workspace.id, input.id, {
       saleDate: input.saleDate,
       salePrice: input.salePrice,
       saleCosts: input.saleCosts,
@@ -246,7 +247,7 @@ function revalidateProperty(propertyId: string): void {
 }
 
 export async function createCashflowAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = cashflowInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -255,7 +256,7 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
 
   const input = parsed.data;
 
-  const property = await findProperty(user.id, input.propertyId);
+  const property = await findProperty(user.workspace.id, input.propertyId);
   if (!property) {
     return rejectedResult("propertyId", "Bien introuvable.");
   }
@@ -265,7 +266,12 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
   let currency = input.currency ?? DEFAULT_CURRENCY;
 
   if (input.transactionId) {
-    const transaction = await findTransactionRef(user.id, input.transactionId);
+    // Linking reads the ledger: refused when the budget module is not active here.
+    if (!hasModule(user.workspace, "budget")) {
+      return rejectedResult("transactionId", "Transaction introuvable.");
+    }
+
+    const transaction = await findTransactionRef(user.workspace.id, input.transactionId);
     if (!transaction) {
       return rejectedResult("transactionId", "Transaction introuvable.");
     }
@@ -312,7 +318,7 @@ export async function createCashflowAction(values: unknown): Promise<ActionResul
  */
 
 export async function createLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = loanInputSchema.safeParse(values);
   if (!parsed.success) {
@@ -321,7 +327,7 @@ export async function createLoanAction(values: unknown): Promise<ActionResult> {
 
   const input = parsed.data;
 
-  const property = await findProperty(user.id, input.propertyId);
+  const property = await findProperty(user.workspace.id, input.propertyId);
   if (!property) {
     return rejectedResult("propertyId", "Bien introuvable.");
   }
@@ -338,7 +344,7 @@ export async function createLoanAction(values: unknown): Promise<ActionResult> {
 }
 
 export async function updateLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = loanUpdateSchema.safeParse(values);
   if (!parsed.success) {
@@ -347,19 +353,19 @@ export async function updateLoanAction(values: unknown): Promise<ActionResult> {
 
   const input = parsed.data;
 
-  const existing = await findLoan(user.id, input.id);
+  const existing = await findLoan(user.workspace.id, input.id);
   if (!existing) {
     return rejectedResult("id", "Prêt introuvable : il a peut-être déjà été supprimé.");
   }
 
-  const property = await findProperty(user.id, input.propertyId);
+  const property = await findProperty(user.workspace.id, input.propertyId);
   if (!property) {
     return rejectedResult("propertyId", "Bien introuvable.");
   }
 
   try {
     const { id, ...fields } = input;
-    const updated = await updateLoan(user.id, id, fields);
+    const updated = await updateLoan(user.workspace.id, id, fields);
     if (!updated) {
       return rejectedResult("id", "Prêt introuvable : il a peut-être déjà été supprimé.");
     }
@@ -372,7 +378,7 @@ export async function updateLoanAction(values: unknown): Promise<ActionResult> {
 }
 
 export async function deleteLoanAction(values: unknown): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireModule("real-estate");
 
   const parsed = recordIdInput.safeParse(values);
   if (!parsed.success) {
@@ -380,7 +386,7 @@ export async function deleteLoanAction(values: unknown): Promise<ActionResult> {
   }
 
   try {
-    const deleted = await deleteLoan(user.id, parsed.data.id);
+    const deleted = await deleteLoan(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Prêt introuvable : il a peut-être déjà été supprimé.");
     }

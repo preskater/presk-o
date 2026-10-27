@@ -13,6 +13,7 @@ import {
   formatMoney,
   type Currency,
 } from "@/lib/money";
+import type { ModuleKey } from "@/modules/catalog/catalog";
 
 /**
  * Alert engine — shared contract (BP-05).
@@ -42,6 +43,23 @@ export const ALERT_KINDS = [
   "OVERDUE_EVENT",
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
+
+/**
+ * The module whose data each rule reads. An alert of an inactive module is not shown nor
+ * exported: its stored episode stays as it is and reappears once the module is back.
+ */
+export const ALERT_KIND_MODULES: Record<AlertKind, ModuleKey> = {
+  LOW_BALANCE: "budget",
+  BUDGET_OVERRUN: "budget",
+  BUDGET_THRESHOLD: "budget",
+  UNUSUAL_EXPENSE: "budget",
+  STALE_INTEGRATION: "development",
+  OVERDUE_EVENT: "real-estate",
+};
+
+export function isAlertVisible(kind: AlertKind, modules: readonly ModuleKey[]): boolean {
+  return modules.includes(ALERT_KIND_MODULES[kind]);
+}
 
 export const ALERT_KIND_LABELS: Record<AlertKind, string> = {
   LOW_BALANCE: "Solde bas",

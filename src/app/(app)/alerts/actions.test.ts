@@ -26,7 +26,12 @@ const { dismissAlertAction, saveAlertRulesAction } = await import("./actions");
  * mocked: what is asserted here is that a dismissal is scoped to the signed-in owner,
  * that an invalid configuration writes nothing, and that saving rules re-evaluates.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 const VALID_RULES = {
   lowBalance: { enabled: true, thresholdAmount: "100,00", thresholdCurrency: "EUR" },
@@ -57,7 +62,7 @@ describe("dismissAlertAction", () => {
 
     expect(result).toEqual({ status: "ok" });
     expect(dismissAlertMock).toHaveBeenCalledTimes(1);
-    expect(dismissAlertMock.mock.calls[0][0]).toBe(OWNER.id);
+    expect(dismissAlertMock.mock.calls[0][0]).toBe(OWNER.workspace.id);
     expect(dismissAlertMock.mock.calls[0][1]).toBe("alert-1");
     expect(dismissAlertMock.mock.calls[0][2]).toBeInstanceOf(Date);
     expect(revalidatePathMock).toHaveBeenCalledWith("/alerts");
@@ -103,11 +108,11 @@ describe("saveAlertRulesAction", () => {
     expect(result).toEqual({ status: "ok" });
     expect(saveAlertRulesMock).toHaveBeenCalledTimes(1);
 
-    const [userId, configs] = saveAlertRulesMock.mock.calls[0] as [
+    const [workspaceId, configs] = saveAlertRulesMock.mock.calls[0] as [
       string,
       { kind: string; enabled: boolean; thresholdAmount: Decimal | null; thresholdCurrency: string | null; thresholdPercent: Decimal | null; thresholdDays: number | null }[],
     ];
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(configs.map((config) => config.kind)).toEqual([
       "LOW_BALANCE",
       "BUDGET_OVERRUN",
@@ -131,7 +136,7 @@ describe("saveAlertRulesAction", () => {
 
     expect(configs[4].thresholdDays).toBe(2);
     expect(configs[5].thresholdDays).toBe(0);
-    expect(refreshAlertsMock).toHaveBeenCalledWith(OWNER.id);
+    expect(refreshAlertsMock).toHaveBeenCalledWith(OWNER.workspace.id);
   });
 
   it("accepts clearing a threshold: the default applies again", async () => {

@@ -3,6 +3,7 @@ import { hashPassword } from "../src/lib/auth/password";
 import { ensureCategory } from "../src/modules/budget/repository";
 import { SALARY_CATEGORY_NAME } from "../src/modules/budget/salary";
 import { PASSWORD_MIN_LENGTH } from "../src/modules/identity/domain";
+import { defaultWorkspaceId } from "../src/modules/identity/workspace";
 import {
   ensureDefaultWorkspace,
   findOwnerByEmail,
@@ -59,7 +60,7 @@ async function main(): Promise<void> {
   // so every owner has it from the start. The booking action also creates it on demand,
   // which covers owners seeded before this default existed. Never personal data: the
   // category is empty until the owner records something in it.
-  await ensureCategory({ userId: owner.id, name: SALARY_CATEGORY_NAME, kind: "INCOME" });
+  await ensureCategory({ workspaceId: defaultWorkspaceId(owner.id), name: SALARY_CATEGORY_NAME, kind: "INCOME" });
 
   // Only the identifier is printed: never the password, never the hash.
   console.log(

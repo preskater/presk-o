@@ -13,6 +13,7 @@ vi.mock("@/lib/auth/guard", () => ({
       status: 401,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     }),
+  moduleUnavailableResponse: () => new Response(null, { status: 404 }),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listGoals: (...args: unknown[]) => listGoalsMock(...args),
@@ -28,7 +29,12 @@ const { GET } = await import("./route");
  * status filter with its fallback, and the unknown-amount rule — an empty cell plus a
  * reason, never a zero.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget"] },
+};
 
 function goal(overrides: Record<string, unknown> = {}) {
   return {
@@ -77,11 +83,20 @@ describe("GET /api/export/goals", () => {
     expect(listGoalsMock).not.toHaveBeenCalled();
   });
 
+  it("answers 404 and reads nothing when the budget module is disabled", async () => {
+    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+
+    const response = await GET(new Request("http://test.local/api/export/goals"));
+
+    expect(response.status).toBe(404);
+    expect(listGoalsMock).not.toHaveBeenCalled();
+  });
+
   it("exports a manual-amount goal with its progress, owner-scoped and bounded", async () => {
     const response = await GET(new Request("http://test.local/api/export/goals"));
 
     expect(response.status).toBe(200);
-    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.id, { take: 10_000 });
+    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.workspace.id, { take: 10_000 });
     expect(readAccountBalanceMock).not.toHaveBeenCalled();
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -105,7 +120,7 @@ describe("GET /api/export/goals", () => {
 
     const response = await GET(new Request("http://test.local/api/export/goals"));
 
-    expect(readAccountBalanceMock).toHaveBeenCalledWith(OWNER.id, "account-1");
+    expect(readAccountBalanceMock).toHaveBeenCalledWith(OWNER.workspace.id, "account-1");
 
     const lines = await bodyOf(response);
     expect(lines[1]).toBe(

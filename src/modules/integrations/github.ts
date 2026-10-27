@@ -2,11 +2,14 @@ import {
   assertIssueShape,
   assertMilestoneShape,
   assertProjectShape,
+  descriptionPresence,
   parseProviderInstant,
   parseRetryAfterSeconds,
   ProviderError,
   requestJson,
   requestJsonConditional,
+  type CiRepositoryResult,
+  type CiSyncOutcome,
   type IntegrationAdapter,
   type IssueSyncOutcome,
   type IssueSyncRequest,
@@ -16,6 +19,7 @@ import {
 } from "./adapter";
 import { cacheResourceKey } from "./cache";
 import type {
+  ProviderCiRun,
   ProviderIssue,
   ProviderMilestone,
   ProviderProject,
@@ -34,9 +38,11 @@ const API_VERSION = "2022-11-28";
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_MAX_PAGES = 5;
 /** Issues are queried per repository, so the run is bounded. */
-const DEFAULT_MAX_REPOSITORIES = 20;
+export const DEFAULT_MAX_REPOSITORIES = 20;
 const DEFAULT_ISSUE_PAGE_SIZE = 50;
 const DEFAULT_MILESTONE_PAGE_SIZE = 50;
+/** Recent workflow runs read per repository: enough to find each workflow's latest. */
+const DEFAULT_CI_PAGE_SIZE = 20;
 const MAX_LABELS = 5;
 const MAX_ASSIGNEES = 5;
 
@@ -50,6 +56,8 @@ type GitHubRepository = {
   stargazers_count?: unknown;
   open_issues_count?: unknown;
   pushed_at?: unknown;
+  description?: unknown;
+  topics?: unknown;
 };
 
 /**
@@ -83,6 +91,19 @@ type GitHubMilestone = {
   open_issues?: unknown;
   closed_issues?: unknown;
   html_url?: unknown;
+};
+
+/** Shape of one entry of the workflow runs endpoint (`workflow_runs`). */
+type GitHubWorkflowRun = {
+  id?: unknown;
+  name?: unknown;
+  head_branch?: unknown;
+  status?: unknown;
+  conclusion?: unknown;
+  html_url?: unknown;
+  run_started_at?: unknown;
+  created_at?: unknown;
+  updated_at?: unknown;
 };
 
 /** Reads the `rel="next"` link returned by GitHub; `null` means the last page. */
@@ -155,6 +176,9 @@ export function normaliseGitHubRepository(
       openIssues:
         typeof repository.open_issues_count === "number" ? repository.open_issues_count : null,
       lastPushAt: repository.pushed_at ?? null,
+      // Repository hygiene (DA-05): presence only, never the text itself.
+      hasDescription: descriptionPresence(repository.description),
+      topicCount: Array.isArray(repository.topics) ? repository.topics.length : null,
     },
   };
 
@@ -165,7 +189,7 @@ export function normaliseGitHubRepository(
 export function createGitHubAdapter(): IntegrationAdapter {
   return {
     provider: "GITHUB",
-    requiredScopes: ["repo:read"],
+    requiredScopes: ["repo:read", "actions:read"],
     tracksIssues: true,
     tracksMilestones: true,
 
@@ -416,7 +440,116 @@ export function createGitHubAdapter(): IntegrationAdapter {
         repositoriesFailed: failed,
       };
     },
+
+    /**
+     * Recent GitHub Actions runs of the same repositories, one request each (DA-03).
+     *
+     * One page of `DEFAULT_CI_PAGE_SIZE` runs, newest first, on the same bounded
+     * selection as issues: at most one extra request per repository read. Unlike
+     * issues, a refused repository never fails the run — a token may read issues
+     * without the Actions permission, and that repository's CI is then reported as
+     * unavailable. Only an exhausted quota stops the run, since every following
+     * request would fail the same way.
+     */
+    async listCiRuns(request: IssueSyncRequest): Promise<CiSyncOutcome> {
+      const fetchImpl = request.fetchImpl ?? fetch;
+      const pageSize = request.pageSize ?? DEFAULT_CI_PAGE_SIZE;
+      const maxRepositories = request.maxRepositories ?? DEFAULT_MAX_REPOSITORIES;
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${request.token}`,
+        "X-GitHub-Api-Version": API_VERSION,
+      };
+
+      const { repositories, skipped } = selectRepositoriesToScan(
+        request.projects,
+        maxRepositories,
+      );
+
+      const results: CiRepositoryResult[] = [];
+
+      for (const repository of repositories) {
+        try {
+          const { data, response }: { data: unknown; response: Response } =
+            await requestJson<unknown>({
+              url: `${API_BASE}/repos/${repository}/actions/runs?per_page=${pageSize}`,
+              headers,
+              fetchImpl,
+              signal: request.signal,
+              classifyError: classifyGitHubError,
+            });
+
+          const runs =
+            typeof data === "object" && data !== null
+              ? (data as { workflow_runs?: unknown }).workflow_runs
+              : undefined;
+
+          if (!Array.isArray(runs)) {
+            throw new ProviderError(
+              "INVALID_RESPONSE",
+              "GitHub n'a pas renvoyé une liste d'exécutions.",
+              { status: response.status },
+            );
+          }
+
+          results.push({
+            repository,
+            read: true,
+            runs: (runs as GitHubWorkflowRun[]).map((run) =>
+              normaliseGitHubWorkflowRun(run, repository),
+            ),
+          });
+        } catch (error) {
+          if (!(error instanceof ProviderError) || error.code === "RATE_LIMITED") {
+            throw error;
+          }
+
+          results.push({ repository, read: false, errorCode: error.toSafeMessage() });
+        }
+      }
+
+      return {
+        supported: true,
+        repositories: results,
+        fetchedAt: new Date(),
+        repositoriesScanned: results.filter((result) => result.read).length,
+        repositoriesSkipped: skipped,
+        repositoriesFailed: results.filter((result) => !result.read).length,
+      };
+    },
   };
+}
+
+export function normaliseGitHubWorkflowRun(
+  run: GitHubWorkflowRun,
+  repository: string,
+): ProviderCiRun {
+  const normalised: ProviderCiRun = {
+    externalId: String(run.id ?? ""),
+    repository,
+    workflowName: typeof run.name === "string" ? run.name : "",
+    branch: typeof run.head_branch === "string" && run.head_branch ? run.head_branch : null,
+    status: typeof run.status === "string" ? run.status : "",
+    conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
+    url: typeof run.html_url === "string" ? run.html_url : "",
+    // `run_started_at` moves on a re-run attempt; older payloads only carry `created_at`.
+    startedAt: parseProviderInstant(run.run_started_at ?? run.created_at, "GITHUB"),
+    updatedAt: parseProviderInstant(run.updated_at, "GITHUB"),
+  };
+
+  if (
+    !normalised.externalId ||
+    !normalised.workflowName ||
+    !normalised.status ||
+    !normalised.url
+  ) {
+    throw new ProviderError(
+      "INVALID_RESPONSE",
+      "Exécution GitHub incomplète : identifiant, workflow, état ou URL manquant.",
+    );
+  }
+
+  return normalised;
 }
 
 export function normaliseGitHubIssue(issue: GitHubIssue, repository: string): ProviderIssue {

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -18,6 +18,16 @@ export const metadata: Metadata = {
     "Tableau de bord personnel : budget, immobilier et projets GitHub / GitLab.",
   // Personal financial data: the dashboard must never be indexed.
   robots: { index: false, follow: false },
+  // Home-screen icon on iOS, which ignores the manifest icons.
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
+
+// Browser chrome follows the page background of each theme (zinc-50 / zinc-950).
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,6 +1,6 @@
 import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
-import { ALERT_STATUSES, describeAlert } from "@/modules/alerts/domain";
+import { ALERT_STATUSES, describeAlert, isAlertVisible } from "@/modules/alerts/domain";
 import { listAlerts } from "@/modules/alerts/repository";
 
 /**
@@ -44,17 +44,20 @@ export async function GET(request: Request): Promise<Response> {
   const rawStatus = url.searchParams.get("status");
   const status = ALERT_STATUSES.find((value) => value === rawStatus);
 
-  const alerts = await listAlerts(user.id, { status, take: EXPORT_ROW_LIMIT });
+  const alerts = await listAlerts(user.workspace.id, { status, take: EXPORT_ROW_LIMIT });
 
-  const rows: AlertRow[] = alerts.map((alert) => ({
+  // Same scope as the page: nothing from a module inactive in the workspace.
+  const rows: AlertRow[] = alerts
+    .filter((alert) => isAlertVisible(alert.kind, user.workspace.modules))
+    .map((alert) => ({
     kind: alert.kind,
     status: alert.status,
     triggeredAt: alert.triggeredAt.toISOString(),
     lastSeenAt: alert.lastSeenAt.toISOString(),
     dismissedAt: alert.dismissedAt?.toISOString() ?? "",
     resolvedAt: alert.resolvedAt?.toISOString() ?? "",
-    reason: describeAlert({ kind: alert.kind, inputs: alert.inputs }).reason,
-  }));
+      reason: describeAlert({ kind: alert.kind, inputs: alert.inputs }).reason,
+    }));
 
   return createCsvResponse(toCsv(rows, COLUMNS), "alertes.csv");
 }

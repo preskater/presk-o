@@ -11,6 +11,8 @@ import {
   thClass,
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
@@ -64,16 +66,23 @@ export default async function RealEstatePage({
   const editLoanId = typeof params.editLoan === "string" ? params.editLoan : null;
 
   const user = await requireUser();
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "real-estate")) {
+    return <ModuleDisabled moduleKey="real-estate" workspace={user.workspace} />;
+  }
   const [properties, recentTransactions, loans] = await Promise.all([
-    listProperties(user.id),
-    // A cashflow entry can be linked to an operation recorded in the budget.
-    listTransactions(user.id, { take: TRANSACTION_OPTION_LIMIT }),
-    listLoans(user.id),
+    listProperties(user.workspace.id),
+    // A cashflow entry can be linked to an operation recorded in the budget, when the
+    // budget module is active in this workspace.
+    hasModule(user.workspace, "budget")
+      ? listTransactions(user.workspace.id, { take: TRANSACTION_OPTION_LIMIT })
+      : [],
+    listLoans(user.workspace.id),
   ]);
 
   // The edited loan is looked up owner-scoped: a foreign or unknown id falls back to
   // the creation form rather than revealing anything.
-  const editingLoan = editLoanId ? await findLoan(user.id, editLoanId) : null;
+  const editingLoan = editLoanId ? await findLoan(user.workspace.id, editLoanId) : null;
 
   // Reduced to strings: the form is a client component and never receives a Decimal.
   const transactionOptions: TransactionOption[] = recentTransactions.map((transaction) => ({

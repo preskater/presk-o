@@ -11,6 +11,7 @@ vi.mock("@/lib/auth/guard", () => ({
       status: 401,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     }),
+  moduleUnavailableResponse: () => new Response(null, { status: 404 }),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listTransactions: (...args: unknown[]) => listTransactionsMock(...args),
@@ -24,7 +25,12 @@ const { GET } = await import("./route");
  * exclusive), its negative outflows untouched (a minus sign is not a formula), its
  * filters, and its row bound.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget"] },
+};
 
 const EXPENSE = {
   id: "tx-1",
@@ -69,6 +75,15 @@ describe("GET /api/export/transactions", () => {
     expect(listTransactionsMock).not.toHaveBeenCalled();
   });
 
+  it("answers 404 and reads nothing when the budget module is disabled", async () => {
+    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+
+    const response = await GET(new Request("http://test.local/api/export/transactions"));
+
+    expect(response.status).toBe(404);
+    expect(listTransactionsMock).not.toHaveBeenCalled();
+  });
+
   it("reads the requested month for the signed-in owner, end date exclusive", async () => {
     const response = await GET(
       new Request("http://test.local/api/export/transactions?month=2026-09"),
@@ -77,11 +92,11 @@ describe("GET /api/export/transactions", () => {
     expect(response.status).toBe(200);
     expect(listTransactionsMock).toHaveBeenCalledTimes(1);
 
-    const [userId, options] = listTransactionsMock.mock.calls[0] as [
+    const [workspaceId, options] = listTransactionsMock.mock.calls[0] as [
       string,
       { from: Date; to: Date; take: number },
     ];
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(options.from.toISOString()).toBe("2026-09-01T00:00:00.000Z");
     // Exclusive upper bound: the 1st of the next month is not part of September.
     expect(options.to.toISOString()).toBe("2026-10-01T00:00:00.000Z");

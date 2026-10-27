@@ -1,4 +1,5 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
+import { hasModule } from "@/modules/catalog/catalog";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
 import { toDateOnlyString } from "@/lib/dates";
 import {
@@ -82,12 +83,15 @@ export async function GET(request: Request): Promise<Response> {
   if (!user) {
     return unauthorizedResponse();
   }
+  if (!hasModule(user.workspace, "budget")) {
+    return moduleUnavailableResponse();
+  }
 
   const url = new URL(request.url);
   const rawStatus = url.searchParams.get("status");
   const status = GOAL_STATUSES.find((value) => value === rawStatus);
 
-  const goals = (await listGoals(user.id, { take: EXPORT_ROW_LIMIT })).filter(
+  const goals = (await listGoals(user.workspace.id, { take: EXPORT_ROW_LIMIT })).filter(
     (goal) => status === undefined || goal.status === status,
   );
 
@@ -100,13 +104,13 @@ export async function GET(request: Request): Promise<Response> {
         .filter((goal) => goal.accountId !== null)
         .map(async (goal) => {
           const { transactionCount, balance } = await readAccountBalance(
-            user.id,
+            user.workspace.id,
             goal.accountId as string,
           );
           return [goal.accountId as string, transactionCount === 0 ? null : balance] as const;
         }),
     ),
-    sumGoalContributions(user.id),
+    sumGoalContributions(user.workspace.id),
   ]);
   const balanceByAccount = new Map(balances);
 

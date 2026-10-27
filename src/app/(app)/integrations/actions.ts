@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { connectionInputSchema } from "@/modules/integrations/domain";
 import { upsertConnection } from "@/modules/integrations/repository";
 import { synchroniseConnection } from "@/jobs/sync";
@@ -16,7 +16,7 @@ import { synchroniseConnection } from "@/jobs/sync";
  */
 
 export async function connectProviderAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireModule("development");
 
   const parsed = connectionInputSchema.safeParse({
     provider: formData.get("provider"),
@@ -30,7 +30,7 @@ export async function connectProviderAction(formData: FormData): Promise<void> {
   }
 
   await upsertConnection({
-    userId: user.id,
+    workspaceId: user.workspace.id,
     provider: parsed.data.provider,
     instanceUrl: parsed.data.instanceUrl,
     externalOwner: parsed.data.externalOwner,
@@ -44,7 +44,7 @@ export async function connectProviderAction(formData: FormData): Promise<void> {
 }
 
 export async function syncConnectionAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireModule("development");
   const connectionId = formData.get("connectionId");
 
   if (typeof connectionId !== "string" || connectionId === "") {
@@ -53,7 +53,7 @@ export async function syncConnectionAction(formData: FormData): Promise<void> {
 
   // A manual one-shot run. Scheduled synchronisations use the same function from
   // a scheduler outside the web process.
-  const result = await synchroniseConnection(user.id, connectionId);
+  const result = await synchroniseConnection(user.workspace.id, connectionId);
 
   revalidatePath("/integrations");
 

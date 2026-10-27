@@ -18,12 +18,12 @@ import { findAccount, findCategory } from "./repository";
  * endpoint, because only a session may supply the owner identifier it takes.
  */
 export async function resolveTransactionInput(
-  userId: string,
+  workspaceId: string,
   input: ValidatedTransactionForm,
 ): Promise<{ ok: true; account: AccountSummary } | { ok: false; result: ActionResult }> {
   // The account is owned by the user, and it is what determines the currency:
   // the form deliberately carries no currency field.
-  const account = await findAccount(userId, input.accountId);
+  const account = await findAccount(workspaceId, input.accountId);
   if (!account) {
     return { ok: false, result: rejectedResult("accountId", "Compte introuvable.") };
   }
@@ -32,7 +32,7 @@ export async function resolveTransactionInput(
   // replayed by hand: the rule is enforced here too, or an expense would sit on an
   // income category and be counted in the wrong place by every report.
   const category: CategorySummary | null = input.categoryId
-    ? await findCategory(userId, input.categoryId)
+    ? await findCategory(workspaceId, input.categoryId)
     : null;
 
   if (input.categoryId && !category) {
