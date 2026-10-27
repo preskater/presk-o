@@ -134,8 +134,7 @@ services:
 
 volumes:
   db-data:
-    external: true
-    name: dashboard_db-data
+    name: staythecourse_db-data
   proxy-data:
   proxy-config:
 
