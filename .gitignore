@@ -41,6 +41,9 @@ next-env.d.ts
 # never commit backups or data exports: they contain personal financial data
 /infra/backups/*.dump
 /infra/backups/*.sql
+/infra/backups/*.dump.sha256
+/infra/backups/*.json
+/infra/backups/*.partial
 /exports
 
 /src/generated/prisma
