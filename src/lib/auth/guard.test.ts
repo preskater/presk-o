@@ -20,9 +20,12 @@ vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
     throw new Error(`redirect:${url}`);
   },
+  notFound: () => {
+    throw new Error("not-found");
+  },
 }));
 
-const { getSessionUser, requireUser } = await import("./guard");
+const { getSessionUser, requireModule, requireUser } = await import("./guard");
 
 /** Fictitious owner only. */
 const owner = {
@@ -53,7 +56,13 @@ const validSession = {
 const CURRENT_TAG = passwordTag(owner.passwordHash);
 
 /** The personal workspace the migration gives every existing owner. */
-const personal = { id: "ws-user-1", name: "Personnel", kind: "PERSONAL", role: "OWNER" };
+const personal = {
+  id: "ws-user-1",
+  name: "Personnel",
+  kind: "PERSONAL",
+  role: "OWNER",
+  modules: ["budget", "real-estate", "development"],
+};
 
 describe("getSessionUser", () => {
   beforeEach(() => {
@@ -221,5 +230,31 @@ describe("requireUser", () => {
     listMembershipsMock.mockResolvedValue([]);
 
     await expect(requireUser()).rejects.toThrow("redirect:/login");
+  });
+});
+
+describe("requireModule", () => {
+  beforeEach(() => {
+    authMock.mockReset().mockResolvedValue(validSession);
+    findActiveSessionMock.mockReset().mockResolvedValue(sessionRecord);
+    touchSessionMock.mockReset().mockResolvedValue(undefined);
+    findOwnerByIdMock.mockReset().mockResolvedValue(owner);
+    listMembershipsMock.mockReset().mockResolvedValue([personal]);
+  });
+
+  it("returns the session user when the module is active in their workspace", async () => {
+    expect((await requireModule("budget")).workspace).toEqual(personal);
+  });
+
+  it("answers 404 when the module is not active in their workspace", async () => {
+    listMembershipsMock.mockResolvedValue([{ ...personal, modules: ["real-estate"] }]);
+
+    await expect(requireModule("budget")).rejects.toThrow("not-found");
+  });
+
+  it("still redirects an anonymous visitor before looking at modules", async () => {
+    authMock.mockResolvedValue(null);
+
+    await expect(requireModule("budget")).rejects.toThrow("redirect:/login");
   });
 });

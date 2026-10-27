@@ -11,6 +11,7 @@ vi.mock("@/lib/auth/guard", () => ({
       status: 401,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     }),
+  moduleUnavailableResponse: () => new Response(null, { status: 404 }),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listTransactions: (...args: unknown[]) => listTransactionsMock(...args),
@@ -24,7 +25,12 @@ const { GET } = await import("./route");
  * exclusive), its negative outflows untouched (a minus sign is not a formula), its
  * filters, and its row bound.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget"] },
+};
 
 const EXPENSE = {
   id: "tx-1",
@@ -66,6 +72,15 @@ describe("GET /api/export/transactions", () => {
     const response = await GET(new Request("http://test.local/api/export/transactions"));
 
     expect(response.status).toBe(401);
+    expect(listTransactionsMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 and reads nothing when the budget module is disabled", async () => {
+    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+
+    const response = await GET(new Request("http://test.local/api/export/transactions"));
+
+    expect(response.status).toBe(404);
     expect(listTransactionsMock).not.toHaveBeenCalled();
   });
 

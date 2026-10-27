@@ -88,6 +88,22 @@ export type ProviderMilestone = {
   url: string;
 };
 
+/** One CI workflow run, reduced to the fields the interface displays (DA-03). */
+export type ProviderCiRun = {
+  externalId: string;
+  repository: string;
+  workflowName: string;
+  branch: string | null;
+  /** "queued", "in_progress", "completed"..., as reported. */
+  status: string;
+  /** `null` while the run is not completed. */
+  conclusion: string | null;
+  url: string;
+  startedAt: Date;
+  /** The provider's last update; the end of a completed run. */
+  updatedAt: Date;
+};
+
 export type SyncOutcome = {
   projects: ProviderProject[];
   fetchedAt: Date;

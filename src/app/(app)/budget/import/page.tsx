@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Card, Notice, PageHeader } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { listAccounts } from "@/modules/budget/repository";
 import { CsvImporter } from "./csv-importer";
 
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * AGENTS.md: automatic bank connections stay out of scope).
  */
 export default async function BudgetImportPage() {
-  const user = await requireUser();
+  const user = await requireModule("budget");
   const accounts = await listAccounts(user.id);
 
   return (

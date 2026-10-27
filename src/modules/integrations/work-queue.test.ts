@@ -7,6 +7,7 @@ import {
   isWithoutLabels,
   isWithoutMilestone,
   queueReasonsFor,
+  sortQueueItems,
   type QueueIssue,
   type QueueMilestone,
 } from "./work-queue";
@@ -155,12 +156,25 @@ describe("buildWorkQueue", () => {
     expect(queue.totalItems).toBe(1);
   });
 
-  it("orders a bucket oldest first", () => {
+  it("orders a bucket by smallest lapse first by default", () => {
     const older = issue({ id: "older", kind: "PULL_REQUEST", labels: ["a"], milestone: "v1", commentsCount: 2, openedAt: daysAgo(40) });
     const newer = issue({ id: "newer", kind: "PULL_REQUEST", labels: ["a"], milestone: "v1", commentsCount: 2, openedAt: daysAgo(20) });
 
-    const queue = buildWorkQueue([newer, older], [], { now: NOW });
+    const queue = buildWorkQueue([older, newer], [], { now: NOW });
     const bucket = queue.buckets.find((entry) => entry.reason === "oldPullRequest")!;
+
+    expect(bucket.items.map((item) => item.issue.id)).toEqual(["newer", "older"]);
+  });
+
+  it("reverses the age order on request", () => {
+    const older = issue({ id: "older", openedAt: daysAgo(40) });
+    const newer = issue({ id: "newer", openedAt: daysAgo(20) });
+
+    const queue = buildWorkQueue([newer, older], [], {
+      now: NOW,
+      sort: { key: "age", direction: "desc" },
+    });
+    const bucket = queue.buckets.find((entry) => entry.reason === "unanswered")!;
 
     expect(bucket.items.map((item) => item.issue.id)).toEqual(["older", "newer"]);
   });
@@ -195,5 +209,56 @@ describe("buildWorkQueue", () => {
   it("uses the default blocked label list", () => {
     expect(BLOCKED_LABELS).toContain("blocked");
     expect(BLOCKED_LABELS).toContain("en attente");
+  });
+});
+
+describe("sortQueueItems", () => {
+  const item = (overrides: Partial<QueueIssue>) => ({
+    issue: issue(overrides),
+    reasons: [],
+    ageDays: 0,
+  });
+
+  it("sorts by subject in French order", () => {
+    const items = [item({ id: "z", title: "Zèbre" }), item({ id: "e", title: "Étude" }), item({ id: "a", title: "abri" })];
+
+    expect(sortQueueItems(items, { key: "subject", direction: "asc" }).map((row) => row.issue.id)).toEqual([
+      "a",
+      "e",
+      "z",
+    ]);
+  });
+
+  it("sorts by first assignee, unassigned first ascending and last descending", () => {
+    const items = [
+      item({ id: "bob", assignees: ["bob"] }),
+      item({ id: "none", assignees: [] }),
+      item({ id: "alice", assignees: ["alice", "zoe"] }),
+    ];
+
+    expect(sortQueueItems(items, { key: "assignee", direction: "asc" }).map((row) => row.issue.id)).toEqual([
+      "none",
+      "alice",
+      "bob",
+    ]);
+    expect(sortQueueItems(items, { key: "assignee", direction: "desc" }).map((row) => row.issue.id)).toEqual([
+      "bob",
+      "alice",
+      "none",
+    ]);
+  });
+
+  it("breaks ties by repository and number so the order is stable", () => {
+    const items = [
+      item({ id: "b2", repository: "acme/b", number: 2, openedAt: daysAgo(5) }),
+      item({ id: "a9", repository: "acme/a", number: 9, openedAt: daysAgo(5) }),
+      item({ id: "a1", repository: "acme/a", number: 1, openedAt: daysAgo(5) }),
+    ];
+
+    expect(sortQueueItems(items, { key: "age", direction: "asc" }).map((row) => row.issue.id)).toEqual([
+      "a1",
+      "a9",
+      "b2",
+    ]);
   });
 });

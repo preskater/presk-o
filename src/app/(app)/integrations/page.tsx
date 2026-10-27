@@ -8,9 +8,10 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { formatInstant } from "@/lib/dates";
 import { readSearchParam } from "@/lib/search-params";
+import { readTableSort } from "@/lib/table-sort";
 import {
   describeInstance,
   describeSyncRun,
@@ -29,15 +30,28 @@ import {
   ISSUE_SORTS,
   type IssueFilters,
 } from "@/modules/integrations/issues";
-import { buildWorkQueue } from "@/modules/integrations/work-queue";
 import {
+  ACTIVITY_SORT_KEYS,
+  buildActivityMetrics,
+  DEFAULT_ACTIVITY_SORT,
+} from "@/modules/integrations/metrics";
+import {
+  buildWorkQueue,
+  DEFAULT_QUEUE_SORT,
+  QUEUE_SORT_KEYS,
+} from "@/modules/integrations/work-queue";
+import {
+  listCiRepositories,
   listConnections,
   listIssues,
   listMilestones,
+  listProjects,
   listProviderCache,
   listSyncRuns,
 } from "@/modules/integrations/repository";
 import { connectProviderAction, syncConnectionAction } from "./actions";
+import { ActivityMetricsCard } from "./activity-metrics-card";
+import { CiStatusCard } from "./ci-status-card";
 import { IssueExplorer } from "./issue-explorer";
 import { IssuesCard } from "./issues-card";
 import { MilestonesCard } from "./milestones-card";
@@ -59,7 +73,7 @@ const STATUS_MESSAGES: Record<string, { tone: "info" | "warning" | "error"; text
 
 /** Read-only scopes, displayed so the requested permissions stay explicit. */
 const SCOPES: Record<IntegrationProvider, string> = {
-  GITHUB: "repo:read, public_repo:read",
+  GITHUB: "repo:read, public_repo:read, actions:read",
   GITLAB: "read_api",
 };
 
@@ -71,14 +85,24 @@ export default async function IntegrationsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const user = await requireUser();
+  const user = await requireModule("development");
   const params = await searchParams;
-  const [connections, issues, milestones, runs, cacheEntries] = await Promise.all([
+  const [
+    connections,
+    issues,
+    milestones,
+    runs,
+    projects,
+    cacheEntries,
+    ciRepositories,
+  ] = await Promise.all([
     listConnections(user.id),
     listIssues(user.id),
     listMilestones(user.id),
     listSyncRuns(user.id),
+    listProjects(user.id),
     listProviderCache(user.id),
+    listCiRepositories(user.id),
   ]);
 
   // One clock for the whole page: a connection stale at render is stale everywhere.
@@ -153,7 +177,29 @@ export default async function IntegrationsPage({
 
   // The queue reads the same filtered set as the explorer, so a filter can never make
   // the two views disagree about what is being looked at.
-  const workQueue = buildWorkQueue(filteredIssues, milestones, { now });
+  // Column sorts live in the URL too, so a sorted view survives a reload.
+  const queueSort = readTableSort(params, "queueSort", QUEUE_SORT_KEYS, DEFAULT_QUEUE_SORT);
+  const activitySort = readTableSort(
+    params,
+    "activitySort",
+    ACTIVITY_SORT_KEYS,
+    DEFAULT_ACTIVITY_SORT,
+  );
+  const workQueue = buildWorkQueue(filteredIssues, milestones, { now, sort: queueSort });
+
+  // Activity metrics describe everything stored, not the explorer's selection: a
+  // median over "unanswered issues only" would be a different, undocumented metric.
+  const activityMetrics = buildActivityMetrics(issues, milestones, projects, {
+    now,
+    issueTracking: issueConnections.length > 0,
+  });
+  const lastSync = connections.reduce<Date | null>(
+    (latest, connection) =>
+      connection.lastSyncedAt && (!latest || connection.lastSyncedAt > latest)
+        ? connection.lastSyncedAt
+        : latest,
+    null,
+  );
 
   return (
     <>
@@ -192,7 +238,23 @@ export default async function IntegrationsPage({
           queue={workQueue}
           issueTrackingConnected
           lastSyncedAt={lastIssueSync}
+          sort={queueSort}
+          params={params}
         />
+      ) : null}
+
+      {lastSync ? (
+        <ActivityMetricsCard
+          metrics={activityMetrics}
+          lastSyncedAt={lastSync}
+          sort={activitySort}
+          params={params}
+        />
+      ) : null}
+
+      {/* CI is read on the same GitHub connections as issues (GitLab pipelines: not yet). */}
+      {issueConnections.length > 0 ? (
+        <CiStatusCard repositories={ciRepositories} lastSyncedAt={lastIssueSync} />
       ) : null}
 
       <Card

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
-import { requireUser } from "@/lib/auth/guard";
+import { requireModule } from "@/lib/auth/guard";
 import { currentMonthKey, formatMonthLabel, isValidMonthKey, parseMonthKey } from "@/lib/dates";
 import { readSearchParam, type SearchParamsInput } from "@/lib/search-params";
 import { TRANSACTION_TYPES, type TransactionType } from "@/modules/budget/domain";
@@ -24,7 +24,7 @@ export default async function BudgetPage({
 }: {
   searchParams: Promise<SearchParamsInput>;
 }) {
-  const user = await requireUser();
+  const user = await requireModule("budget");
   const params = await searchParams;
 
   const requestedMonth = readSearchParam(params, "month");
