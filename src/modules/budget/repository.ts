@@ -1942,6 +1942,41 @@ export async function listAccountBalanceTotals(
 }
 
 /**
+ * The signed total of each account, optionally restricted to operations dated
+ * strictly before a bound.
+ *
+ * The simulation needs both figures: the all-time balance (what the account holds
+ * now) and the opening balance at the start of its projection window. Reading the
+ * opening balance from the rows themselves would stop at the read bound; this
+ * aggregate stays exact whatever the history's size.
+ */
+export async function sumTransactionsByAccount(
+  workspaceId: string,
+  window: { before?: Date } = {},
+): Promise<Map<string, { currency: Currency; transactionCount: number; balance: Decimal }>> {
+  const rows = await getPrisma().transaction.groupBy({
+    by: ["accountId", "currency"],
+    where: {
+      workspaceId,
+      ...(window.before ? { operationDate: { lt: window.before } } : {}),
+    },
+    _count: { _all: true },
+    _sum: { amount: true },
+  });
+
+  return new Map(
+    rows.map((row) => [
+      row.accountId,
+      {
+        currency: assertCurrency(row.currency),
+        transactionCount: row._count._all,
+        balance: new Decimal(row._sum.amount?.toString() ?? "0"),
+      },
+    ]),
+  );
+}
+
+/**
  * The signed total of every account, per currency, aggregated in the database.
  *
  * Exists because summing in memory meant reading through the table's page bound: past

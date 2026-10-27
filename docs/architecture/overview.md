@@ -372,6 +372,32 @@ asked for: a cascade here would silently change what a property is worth.
   be inventing data. On a past month the figure reads as "what was still to be processed".
   An account with no recorded transaction keeps an **unknown** starting balance: its
   projection stays "—" while the pending net is still told — nothing is made up from it.
+- Expense simulation (budget page, « Simuler une dépense ») — a **read-only** scenario
+  built from the same rows as the Prévisions and Suivi tabs. It writes no transaction
+  and changes no threshold.
+  - The total is the sum of the payments; it is never typed separately. A scenario may
+    split one expense into several dated payments, possibly on different accounts.
+  - The window starts at the current month and always covers the current month plus the
+    next six. A past or future payment widens it, three months follow the last payment,
+    and 24 months is the hard bound.
+  - *Balance before scenario* — opening balance + recorded operations + pending
+    forecasts dated in the month. *Balance after scenario* — the same, plus the
+    simulated payments. A confirmed forecast is already a recorded transaction and is
+    never counted twice.
+  - The salary simulation is a **currency-level** forecast: it advances the global
+    balance but no account balance until it is booked.
+  - *Account point low* — the minimum projected balance of an account over the window.
+    *Global point low* — the same for the sum of the currency's accounts.
+  - The threshold is the configured `LOW_BALANCE` rule. A rule naming a currency only
+    compares accounts in that currency; a rule naming none applies to every currency.
+    A negative balance is flagged even without a threshold. A breach already present
+    before the scenario is distinguished from one the scenario causes.
+  - An account with no recorded operation keeps an **unknown** balance, never zero.
+    Currencies are never converted; a scenario is single-currency.
+  - With a category selected, the budget impact reuses the Suivi rules (expenses
+    positive, refunds reducing, transfers and uncategorised rows excluded) and, when
+    the rule is enabled, applies the `BUDGET_THRESHOLD` percentage as the preventive
+    alert line. A month without a budget is « no budget », not a zero envelope.
 - Property totals — each cashflow entry counts once. When an entry is linked to
   a transaction, the transaction is the only source of the amount.
 - Property financing (real-estate page, « Financement » card) — the loans of a property,
