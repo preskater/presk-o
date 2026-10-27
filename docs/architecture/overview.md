@@ -68,6 +68,24 @@ flowchart LR
 - After a write, the action revalidates the affected paths (`/budget`,
   `/real-estate`, `/dashboard`); nothing is cached across owners.
 
+### Quick actions (UX-02)
+
+Convenience paths reuse the write path above; none of them is a second one.
+
+- **Quick entry**: the dashboard's « Nouvelle opération » card renders the budget
+  page's own `TransactionForm` — same `transactionFormSchema`, same
+  `createTransactionAction`, same `keepValues` behaviour and feedback.
+  `quick-transaction-card.test.ts` checks the schema it resolves with.
+- **Filter shortcuts**: links above the budget filters, built by
+  `buildFilterShortcuts` on the query parameters the filter form already submits. A
+  preset (« Non pointées », « Dépenses », « Recettes ») replaces the filters and keeps
+  the month; a period (« Mois en cours », « Mois précédent », « Tous les mois ») keeps
+  the filters and changes the window.
+- **Keyboard**: `n` focuses the label of the page's creation form, `/` the « Libellé
+  contient » search. Targets carry `data-shortcut`; keys typed in a field or with
+  Ctrl, Cmd or Alt are ignored, and a page without the target ignores the key. The
+  shortcuts only move the focus, they never submit.
+
 ### Deletion
 
 A transaction can be removed from the budget table, after a confirmation step that
@@ -443,7 +461,11 @@ asked for: a cascade here would silently change what a property is worth.
   predicates the explorer and the badges use, so a queue rule and a badge can never
   disagree, and it reads the **same filtered set** as the explorer, so both views
   describe the same selection. An issue may appear in several buckets — each is a
-  distinct reason to act — and each bucket is ordered oldest first (backlog order):
+  distinct reason to act. Each bucket is sorted by « Ouverte depuis », smallest lapse
+  first (most recently opened first), by default; the column headers (Sujet, Assigné à,
+  Ouverte depuis) switch the column and direction through `?queueSort=<column>.<asc|desc>`.
+  Ties fall back to repository and number, so the order is stable; an unassigned item
+  sorts as an empty name:
   - *Sans réponse* — an issue open for at least 3 days with zero comments
     (`isUnanswered`, the same rule as the "Sans réponse" badge).
   - *Pull requests anciennes* — an open pull request at least 14 days old
@@ -465,6 +487,38 @@ asked for: a cascade here would silently change what a property is worth.
   the card, rather than inventing a review state it cannot know. An issue with no
   milestone or no label is a real state, never a zero; a milestone without a due date is
   never "due soon".
+- Activity metrics (integrations page, « Indicateurs d'activité », DA-02) —
+  `buildActivityMetrics`, a pure function of the stored snapshots and a reference
+  instant `now` (the render time): the same rows and the same `now` give the same
+  figures. They read **every stored row**, not the explorer's filtered selection. The
+  card only appears once a connection has synchronised at least once, and it names the
+  last read. They describe a backlog and are never a measure of people.
+  - *Pull requests ouvertes* — the number of stored `PULL_REQUEST` rows, i.e. open at the
+    last synchronisation. Unavailable (not zero) when no connection reads pull requests
+    (GitLab does not today).
+  - *Âge médian des PR ouvertes* — the median of `floor((now − openedAt) / 1 day)` over
+    those rows; the mean of the two middle values for an even count. No open pull
+    request means no median ("—"), not an age of zero.
+  - *Dépôts inactifs* — a stored project whose last provider-reported activity is at
+    least `DEFAULT_INACTIVE_DAYS` (30) whole days before `now`. The window is that
+    threshold. The source differs per provider and is not the same signal: GitHub
+    `pushed_at` (last push, any branch), GitLab `last_activity_at` (also moved by issue
+    and merge request activity). A project without a usable date is listed as
+    *inconnue*, never counted as inactive or active. The table lists inactive and
+    undated repositories, sorted by « Dernière activité », smallest lapse first, by
+    default; its headers switch to the repository name or the other direction through
+    `?activitySort=<column>.<asc|desc>`. An undated repository always sorts last: an
+    unknown date is not "the oldest".
+  - *Avancement des jalons ouverts* — over open milestones only, the provider's closed
+    counters divided by its open + closed counters (the same counters as the milestones
+    card, which cover items not followed here). No item attached to any open milestone
+    means no figure ("—"), not 0 % or 100 %.
+  - *Délai ouverture → fusion* and *débit d'issues* — **unavailable, by decision.**
+    Snapshots keep open issues and pull requests only, and a row that disappears may
+    have been closed, merged, transferred or have left the bounded fetch; there is no
+    `mergedAt` and no closed history to compute either honestly. Providing them needs
+    an additive, bounded fetch of recently closed items (new fields or a table, a
+    migration and more provider quota) — a separate ticket, not part of DA-02.
 - Budget charts — two, each answering a question the monthly table cannot. Both reuse
   the aggregation rules above instead of defining their own, so a number in a chart
   always equals the same number in a table:
@@ -591,6 +645,37 @@ beside its fields.
 - Exports are `no-store` and CSV values that could be read as a spreadsheet
   formula are neutralised.- Personal data is never placed in fixtures, screenshots or logs. Error messages
   persisted for display contain a code, never a token or a payload.
+
+## Responsive, dark mode and installability (UX-03)
+
+- **No service worker, no offline cache.** The app is installable through
+  `src/app/manifest.ts` and the icons in `public/icons/` only. Pages, RSC payloads and
+  API responses hold personal financial data and are never stored for offline use;
+  the `no-store` exports are unaffected. Adding a service worker later needs its own
+  decision and a whitelist of static assets only (`/_next/static`, `/icons`), never
+  HTML, RSC or `/api`.
+- The proxy matcher leaves `manifest.webmanifest` and `/icons/` public, like the
+  favicon: the browser fetches them without the session cookie, and they contain no
+  personal data. Every other path still requires a session.
+- The theme follows `prefers-color-scheme`; `color-scheme: light dark` makes native
+  controls (date pickers, selects, scrollbars) follow it too, and `theme-color` matches
+  the page background of each theme.
+- `prefers-reduced-motion: reduce` disables every transition and animation
+  (`globals.css`).
+- Contrast: `src/components/contrast.test.ts` computes the WCAG ratio of the text and
+  background pairs of the interface, in both themes, from Tailwind's own colour tokens,
+  and requires 4.5:1.
+- Wide tables keep a minimum width and scroll horizontally inside their card
+  (`overflow-x-auto`), so the desktop spreadsheet layout is not squeezed on a phone.
+
+Manual checks (fictitious data only):
+
+| Check | Status |
+| --- | --- |
+| Manifest, icons and `theme-color` served signed out; private pages still redirect | Done (curl, 2026-10-22) |
+| Dashboard, budget (Opérations, editable table), real estate, alerts at 375 px wide, both themes | To do |
+| Installation from Chrome / Edge, then « Ajouter à l'écran d'accueil » on iOS | To do |
+| Reduced motion enabled in the OS: folding chevrons no longer animate | To do |
 
 ## CSV import of bank statements
 
@@ -767,6 +852,55 @@ and GitLab (only its project listing is read).
 Cache validators are not secrets — they are opaque tags of public-to-the-token
 responses — but they are still read and written server-side only, scoped through the
 owner's connection.
+
+### CI status (DA-03)
+
+GitHub Actions runs are read from the **same bounded repository selection** (at most
+20 repositories, most recently pushed first), with one request each:
+`GET /repos/{owner}/{repo}/actions/runs?per_page=20`, newest first. A run therefore
+costs at most 20 more requests on top of projects, issues and milestones — well under
+the hourly quota of an authenticated token. No other endpoint is called: no jobs, no
+logs, no timing, no re-run (the integration stays read-only; re-running happens on
+GitHub).
+
+The token needs read access to Actions (`actions:read` on a fine-grained token; a
+classic `repo` token already covers it). Unlike issues, a refused CI read **never
+fails the run**: a token may read issues without the Actions permission. A 401/403, a
+404 or an unexpected payload is recorded per repository (`ProjectSnapshot.ciError`,
+safe code only) and the repository is displayed as *CI indisponible* with the reason.
+Only an exhausted quota stops the run, as everywhere else, since every following
+request would fail the same way.
+
+Stored per run (`CiRunSnapshot`), and nothing else: workflow name, branch, status,
+conclusion, link, start and last-update instants. The card, on the integrations page,
+shows the **latest run of each workflow**, most recently started first
+(`buildCiOverview`), so the last runs read first; ties fall back to repository and
+workflow name. Failures are not sorted to the top: a notice above the table counts the
+workflows whose latest run failed, so an older failure stays visible. Outcomes:
+
+- *Échec* — conclusion `failure`, `timed_out` or `startup_failure`.
+- *En cours* — any status other than `completed` (queued, waiting, in progress).
+- *Autre* — completed but neither success nor failure (`cancelled`, `skipped`,
+  `neutral`, `action_required`…), reported as it is rather than counted as either.
+- *Réussi* — conclusion `success`.
+
+Duration is `runUpdatedAt − startedAt` for a completed run: wall-clock time from start
+to the provider's last update, which includes queueing between jobs — not billed time.
+`startedAt` is `run_started_at` (the latest attempt), or `created_at` on payloads
+without it. Three repository states are kept apart and none of them reads as green:
+*CI indisponible* (read refused), *aucune exécution récente* (read, empty page), and
+*not read* (`ciCheckedAt` null: outside the bounded selection). A repository outside
+the selection on a later run keeps its last read, displayed with the last read date.
+
+**GitLab pipelines are not read** in this first pass: the GitLab adapter returns
+`supported: false`, and the card says how many GitLab projects that leaves out.
+
+Retention (DR-05): CI runs are current state, not history. Each read replaces the
+runs of that repository with the page just fetched, a refused read drops them, and
+runs of repositories no longer tracked are dropped, so the table is bounded by
+construction (repositories read × 20 rows) and `db:cleanup` does not need to touch it.
+DA-04 can reuse the adapter method as is: it is a single bounded request per
+repository whose result is already normalised to the stored fields.
 
 ## Not implemented in this base
 

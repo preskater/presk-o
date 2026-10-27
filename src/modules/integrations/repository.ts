@@ -1,7 +1,7 @@
 import { getPrisma } from "@/lib/db";
 import { decodeEncryptionKey, decryptSecret, encryptSecret } from "@/lib/crypto";
 import { getServerEnv } from "@/lib/env";
-import type { ResourceCheck } from "./adapter";
+import type { ResourceCheck, CiRepositoryResult } from "./adapter";
 import { CACHE_MAX_AGE_DAYS, type CacheEntryLike } from "./cache";
 import {
   describeInstance,
@@ -430,6 +430,25 @@ export async function listIssues(workspaceId: string): Promise<IssueSummary[]> {
   }));
 }
 
+/** Stored projects with the provider metrics the activity indicators read (DA-02). */
+export async function listProjects(
+  userId: string,
+): Promise<{ name: string; metrics: Record<string, unknown> | null }[]> {
+  const rows = await getPrisma().projectSnapshot.findMany({
+    where: { connection: { userId } },
+    orderBy: { name: "asc" },
+    select: { name: true, metrics: true },
+  });
+
+  return rows.map((row) => ({
+    name: row.name,
+    metrics:
+      typeof row.metrics === "object" && row.metrics !== null && !Array.isArray(row.metrics)
+        ? (row.metrics as Record<string, unknown>)
+        : null,
+  }));
+}
+
 /** One milestone as the interface displays it. */
 export type MilestoneSummary = {
   id: string;
@@ -696,6 +715,175 @@ export async function listProviderCache(workspaceId: string): Promise<ProviderCa
     hasValidator: Boolean(row.etag || row.lastModified),
     checkedAt: row.checkedAt,
     changedAt: row.changedAt,
+  }));
+}
+
+/**
+ * Stores the CI runs of one synchronisation (DA-03).
+ *
+ * The table holds current state, bounded by construction (repositories read × one
+ * page): for every repository read, the runs it returned replace the previous ones;
+ * for a refused repository, its runs are dropped and the refusal is recorded on the
+ * project, so the interface shows "unavailable" rather than outdated results. Runs of
+ * repositories that are no longer tracked are dropped too. A repository left out by
+ * the bound keeps its last read, displayed with its date.
+ */
+export async function saveCiRuns(input: {
+  connectionId: string;
+  provider: IntegrationProvider;
+  results: readonly CiRepositoryResult[];
+  /** Names of every project of this run, to drop runs of untracked repositories. */
+  trackedRepositories: readonly string[];
+  fetchedAt: Date;
+}): Promise<{ created: number; updated: number }> {
+  const prisma = getPrisma();
+
+  const existing = new Set(
+    (
+      await prisma.ciRunSnapshot.findMany({
+        where: { connectionId: input.connectionId },
+        select: { externalId: true },
+      })
+    ).map((row) => row.externalId),
+  );
+  let created = 0;
+  let saved = 0;
+
+  for (const result of input.results) {
+    const runs = result.read ? result.runs : [];
+
+    for (const run of runs) {
+      if (!existing.has(run.externalId)) {
+        created += 1;
+      }
+      saved += 1;
+      const data = {
+        provider: input.provider,
+        repository: run.repository,
+        workflowName: run.workflowName,
+        branch: run.branch,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.url,
+        startedAt: run.startedAt,
+        runUpdatedAt: run.updatedAt,
+        fetchedAt: input.fetchedAt,
+      };
+
+      await prisma.ciRunSnapshot.upsert({
+        where: {
+          connectionId_externalId: {
+            connectionId: input.connectionId,
+            externalId: run.externalId,
+          },
+        },
+        create: { connectionId: input.connectionId, externalId: run.externalId, ...data },
+        update: data,
+      });
+    }
+
+    await prisma.ciRunSnapshot.deleteMany({
+      where: {
+        connectionId: input.connectionId,
+        repository: result.repository,
+        externalId: { notIn: runs.map((run) => run.externalId) },
+      },
+    });
+    await prisma.projectSnapshot.updateMany({
+      where: { connectionId: input.connectionId, name: result.repository },
+      data: {
+        ciCheckedAt: input.fetchedAt,
+        ciError: result.read ? null : result.errorCode,
+      },
+    });
+  }
+
+  await prisma.ciRunSnapshot.deleteMany({
+    where: {
+      connectionId: input.connectionId,
+      repository: { notIn: [...input.trackedRepositories] },
+    },
+  });
+
+  return { created, updated: saved - created };
+}
+
+/** CI state of every stored project, as the CI card reads it (DA-03). */
+export type CiRepositorySummary = {
+  repository: string;
+  provider: IntegrationProvider;
+  url: string;
+  ciCheckedAt: Date | null;
+  ciError: string | null;
+  runs: CiRunSummary[];
+};
+
+export type CiRunSummary = {
+  id: string;
+  repository: string;
+  workflowName: string;
+  branch: string | null;
+  status: string;
+  conclusion: string | null;
+  url: string;
+  startedAt: Date;
+  runUpdatedAt: Date;
+};
+
+export async function listCiRepositories(userId: string): Promise<CiRepositorySummary[]> {
+  const [projects, runs] = await Promise.all([
+    getPrisma().projectSnapshot.findMany({
+      where: { connection: { userId } },
+      orderBy: { name: "asc" },
+      select: {
+        name: true,
+        provider: true,
+        externalUrl: true,
+        ciCheckedAt: true,
+        ciError: true,
+        connectionId: true,
+      },
+    }),
+    getPrisma().ciRunSnapshot.findMany({
+      where: { connection: { userId } },
+      orderBy: { startedAt: "desc" },
+      select: {
+        id: true,
+        connectionId: true,
+        repository: true,
+        workflowName: true,
+        branch: true,
+        status: true,
+        conclusion: true,
+        url: true,
+        startedAt: true,
+        runUpdatedAt: true,
+      },
+    }),
+  ]);
+
+  return projects.map((project) => ({
+    repository: project.name,
+    provider: project.provider as IntegrationProvider,
+    url: project.externalUrl,
+    ciCheckedAt: project.ciCheckedAt,
+    ciError: project.ciError,
+    runs: runs
+      .filter(
+        (run) =>
+          run.connectionId === project.connectionId && run.repository === project.name,
+      )
+      .map((run) => ({
+        id: run.id,
+        repository: run.repository,
+        workflowName: run.workflowName,
+        branch: run.branch,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.url,
+        startedAt: run.startedAt,
+        runUpdatedAt: run.runUpdatedAt,
+      })),
   }));
 }
 

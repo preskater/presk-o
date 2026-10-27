@@ -160,7 +160,7 @@ function CurrencyThreshold({ threshold }: { threshold: SavingsThreshold }) {
         <summary className="cursor-pointer text-sm font-medium">
           Détail des 6 mois — {currency}
         </summary>
-        <div className="pt-2">
+        <div className="overflow-x-auto pt-2">
           <table className="w-full text-sm">
             <caption className="sr-only">
               Dépenses prévues mois par mois pour le seuil d&apos;épargne

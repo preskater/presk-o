@@ -8,12 +8,15 @@ import {
 	StatCard,
 } from "@/components/ui";
 import { requireUser } from "@/lib/auth/guard";
-import { formatInstant } from "@/lib/dates";
+import { formatInstant, toDateOnlyString } from "@/lib/dates";
 import { publicEnv } from "@/lib/env";
 import { formatMoney } from "@/lib/money";
 import { refreshAlerts } from "@/modules/alerts/refresh";
 import { describeBudgetVariance } from "@/modules/budget/report";
+import { listAccounts, listCategories, listLabelHistory } from "@/modules/budget/repository";
+import { buildLabelSuggestions } from "@/modules/budget/suggestions";
 import { getDashboardOverview } from "@/modules/dashboard/queries";
+import { QuickTransactionCard } from "../budget/quick-transaction-card";
 
 // Personal financial data must never be served from a static cache.
 export const dynamic = "force-dynamic";
@@ -27,7 +30,14 @@ export default async function DashboardPage() {
 	await refreshAlerts(user.workspace.id);
 
 	// Only the active modules are read and shown; the others leave no card behind.
-	const overview = await getDashboardOverview(user.workspace.id, { modules: user.workspace.modules });
+	const budgetActive = user.workspace.modules.includes("budget");
+	const [overview, accounts, categories, labelHistory] = await Promise.all([
+		getDashboardOverview(user.workspace.id, { modules: user.workspace.modules }),
+		// The quick entry reads the same lists as the budget page's form, from the owner's data.
+		budgetActive ? listAccounts(user.workspace.id) : [],
+		budgetActive ? listCategories(user.workspace.id) : [],
+		budgetActive ? listLabelHistory(user.workspace.id) : [],
+	]);
 
 	const { alerts, budget, budgetTracking, realEstate, integrations, monthKey, monthLabel } =
 		overview;
@@ -102,6 +112,15 @@ export default async function DashboardPage() {
 					</Link>
 					.
 				</Notice>
+			) : null}
+
+			{budget ? (
+				<QuickTransactionCard
+					accounts={accounts}
+					categories={categories}
+					labelSuggestions={buildLabelSuggestions(labelHistory)}
+					today={toDateOnlyString(new Date())}
+				/>
 			) : null}
 
 			{budget && budgetTracking ? (
