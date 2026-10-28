@@ -5,6 +5,7 @@ const requireApiUserMock = vi.fn();
 const listGoalsMock = vi.fn();
 const readAccountBalanceMock = vi.fn();
 const sumGoalContributionsMock = vi.fn();
+const recordAuditEventMock = vi.fn();
 
 vi.mock("@/lib/auth/guard", () => ({
   requireApiUser: () => requireApiUserMock(),
@@ -19,6 +20,9 @@ vi.mock("@/modules/budget/repository", () => ({
   listGoals: (...args: unknown[]) => listGoalsMock(...args),
   readAccountBalance: (...args: unknown[]) => readAccountBalanceMock(...args),
   sumGoalContributions: (...args: unknown[]) => sumGoalContributionsMock(...args),
+}));
+vi.mock("@/modules/audit/repository", () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
 }));
 
 const { GET } = await import("./route");
@@ -67,6 +71,7 @@ beforeEach(() => {
   });
   // No logged contributions by default: the manual amount is the only source.
   sumGoalContributionsMock.mockReset().mockResolvedValue(new Map());
+  recordAuditEventMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -96,7 +101,12 @@ describe("GET /api/export/goals", () => {
     const response = await GET(new Request("http://test.local/api/export/goals"));
 
     expect(response.status).toBe(200);
-    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.workspace.id, { take: 10_000 });
+    expect(listGoalsMock).toHaveBeenCalledWith(OWNER.workspace.id, {
+      status: undefined,
+      from: undefined,
+      to: undefined,
+      take: 10_001,
+    });
     expect(readAccountBalanceMock).not.toHaveBeenCalled();
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -170,23 +180,74 @@ describe("GET /api/export/goals", () => {
     expect(lines[1]).not.toMatch(/,0\.00,0\.0/);
   });
 
-  it("filters by status, and ignores an unknown one like the other exports", async () => {
+  it("forwards the status filter, and ignores an unknown one like the other exports", async () => {
+    // Filtering happens in the read, not after it: a window cut before the filter would
+    // report a completion the file does not have. The mock stands in for that read.
     listGoalsMock.mockResolvedValue([
-      goal(),
       goal({ id: "goal-2", name: "Prêt auto", status: "ACHIEVED" }),
-      goal({ id: "goal-3", name: "Ancien projet", status: "ABANDONED" }),
     ]);
 
     const filtered = await bodyOf(
       await GET(new Request("http://test.local/api/export/goals?status=ACHIEVED")),
     );
+    expect(listGoalsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      status: "ACHIEVED",
+      from: undefined,
+      to: undefined,
+      take: 10_001,
+    });
     expect(filtered).toHaveLength(2);
     expect(filtered[1]).toContain("Prêt auto");
 
-    const everything = await bodyOf(
-      await GET(new Request("http://test.local/api/export/goals?status=active")),
+    await GET(new Request("http://test.local/api/export/goals?status=active"));
+    expect(listGoalsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      status: undefined,
+      from: undefined,
+      to: undefined,
+      take: 10_001,
+    });
+  });
+
+  it("applies from/to to the target date, both days inclusive", async () => {
+    const response = await GET(
+      new Request("http://test.local/api/export/goals?from=2027-01-01&to=2027-12-31"),
     );
-    expect(everything).toHaveLength(4);
+
+    expect(listGoalsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      status: undefined,
+      from: new Date(Date.UTC(2027, 0, 1)),
+      to: new Date(Date.UTC(2028, 0, 1)),
+      take: 10_001,
+    });
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="objectifs-2027-01-01_2027-12-31.csv"',
+    );
+  });
+
+  it("reads one balance per distinct account, not one per goal", async () => {
+    listGoalsMock.mockResolvedValue([
+      goal({ id: "goal-1", currentAmount: null, accountId: "account-1" }),
+      goal({ id: "goal-2", currentAmount: null, accountId: "account-1" }),
+    ]);
+
+    await GET(new Request("http://test.local/api/export/goals"));
+
+    expect(readAccountBalanceMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("records the export in the audit trail", async () => {
+    await GET(new Request("http://test.local/api/export/goals?status=ACTIVE"));
+
+    expect(recordAuditEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: OWNER.workspace.id,
+        actorId: OWNER.id,
+        action: "export.goals",
+        entityType: "EXPORT",
+        outcome: "SUCCESS",
+        metadata: expect.objectContaining({ entity: "goals", scope: "all", rows: 1 }),
+      }),
+    );
   });
 
   it("writes a header line even without any goal", async () => {

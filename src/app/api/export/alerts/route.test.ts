@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiUserMock = vi.fn();
 const listAlertsMock = vi.fn();
+const recordAuditEventMock = vi.fn();
 
 vi.mock("@/lib/auth/guard", () => ({
   requireApiUser: () => requireApiUserMock(),
@@ -13,6 +14,9 @@ vi.mock("@/lib/auth/guard", () => ({
 }));
 vi.mock("@/modules/alerts/repository", () => ({
   listAlerts: (...args: unknown[]) => listAlertsMock(...args),
+}));
+vi.mock("@/modules/audit/repository", () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
 }));
 
 const { GET } = await import("./route");
@@ -57,6 +61,7 @@ async function bodyOf(response: Response): Promise<string[]> {
 beforeEach(() => {
   requireApiUserMock.mockReset().mockResolvedValue(OWNER);
   listAlertsMock.mockReset().mockResolvedValue([alertRecord()]);
+  recordAuditEventMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("GET /api/export/alerts", () => {
@@ -75,7 +80,9 @@ describe("GET /api/export/alerts", () => {
     expect(response.status).toBe(200);
     expect(listAlertsMock).toHaveBeenCalledWith(OWNER.workspace.id, {
       status: undefined,
-      take: 10_000,
+      from: undefined,
+      to: undefined,
+      take: 10_001,
     });
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -118,14 +125,52 @@ describe("GET /api/export/alerts", () => {
     await GET(new Request("http://test.local/api/export/alerts?status=RESOLVED"));
     expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
       status: "RESOLVED",
-      take: 10_000,
+      from: undefined,
+      to: undefined,
+      take: 10_001,
     });
 
     await GET(new Request("http://test.local/api/export/alerts?status=resolved"));
     expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
       status: undefined,
-      take: 10_000,
+      from: undefined,
+      to: undefined,
+      take: 10_001,
     });
+  });
+
+
+  it("applies from/to to the trigger instant, both UTC calendar days inclusive", async () => {
+    const response = await GET(
+      new Request("http://test.local/api/export/alerts?from=2026-10-01&to=2026-10-31"),
+    );
+
+    // A URL carries no time zone, so the bounds are UTC days: 2026-11-01T00:00Z is the
+    // exclusive end that makes 2026-10-31 fully included.
+    expect(listAlertsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      status: undefined,
+      from: new Date(Date.UTC(2026, 9, 1)),
+      to: new Date(Date.UTC(2026, 10, 1)),
+      take: 10_001,
+    });
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="alertes-2026-10-01_2026-10-31.csv"',
+    );
+  });
+
+  it("records the export in the audit trail", async () => {
+    await GET(new Request("http://test.local/api/export/alerts?status=ACTIVE"));
+
+    expect(recordAuditEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: OWNER.workspace.id,
+        actorId: OWNER.id,
+        action: "export.alerts",
+        entityType: "EXPORT",
+        outcome: "SUCCESS",
+        metadata: expect.objectContaining({ entity: "alerts", rows: 1 }),
+      }),
+    );
   });
 
   it("writes a header line even without any alert", async () => {

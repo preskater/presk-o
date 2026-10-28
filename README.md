@@ -99,11 +99,17 @@ Working today:
   the rule quiet.
 - CSV exports: transactions (a month by default, `?year=YYYY` for a year or `?all=1`
   for every month, plus account/category/type/text/reconciliation filters and a
-  `pointe_le` column), budgets
-  (month), goals and alerts (status filter), plus the properties file — all behind the
-  session, `no-store`, formula-neutralised, and bounded at 10 000 rows rather than
-  streamed (the decision is documented in the architecture notes). An unknown value
-  exports as an empty cell with its reason, never as a zero.
+  `pointe_le` column), budgets (month or a whole-month window), goals and alerts (status
+  filter), plus the properties file — all behind the session, `no-store`,
+  formula-neutralised, and bounded at 10 000 rows rather than streamed (the decision is
+  documented in the architecture notes). `X-Export-Truncated: true` says the cap cut the
+  file. `/api/export?entity=transactions|properties|budgets|goals|alerts` selects the
+  same builders as the per-entity routes; an unknown entity answers 400 before any read.
+  `from`/`to` (`YYYY-MM-DD`, both inclusive) select an explicit window and win over the
+  month/year/all scopes; a malformed or reversed window is refused with a 400 rather than
+  silently exporting another period. Every delivered file writes one audit entry (scope,
+  bounds, row count, truncation); a file whose entry cannot be written is withheld. An
+  unknown value exports as an empty cell with its reason, never as a zero.
 - Real estate: properties and cashflow entries entered from the real-estate
   page, occupancy status, totals, due dates. A **Financement** card tracks the loans
   of a property — capital, a dated outstanding-balance snapshot, rate, term, monthly
@@ -428,8 +434,10 @@ running. No test connects to a database or performs a real network call: busines
 rules are called directly, provider adapters receive an injected fake `fetch`, and
 the action-level tests mock their modules. They cover what is expensive to get
 wrong: money and date handling, monthly totals (transfers counted by sign, refunds,
-currencies), CSV escaping and formula neutralisation, the export routes (filters,
-month boundaries, empty files, bounded reads, owner scoping), the password policy
+currencies), CSV escaping and formula neutralisation, the export routes and the umbrella
+selector (filters and their boundaries, invalid windows, empty files, bounded reads,
+truncation header, owner scoping, audit entries), the audit metadata redaction, the
+password policy
 and the session guard, provider failure cases, issue filters and milestones.
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request:

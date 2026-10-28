@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createCsvResponse, escapeCsvValue, EXPORT_ROW_LIMIT, toCsv } from "./csv";
+import {
+  createCsvResponse,
+  escapeCsvValue,
+  EXPORT_ROW_LIMIT,
+  EXPORT_TRUNCATED_HEADER,
+  toCsv,
+} from "./csv";
 
 type Row = { name: string; amount: string };
 
@@ -100,5 +106,14 @@ describe("createCsvResponse", () => {
     const bytes = new Uint8Array(await response.arrayBuffer());
     expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
     expect(await new Response(bytes).text()).toContain("Loyer");
+  });
+
+  it("states whether the row cap cut the file", () => {
+    // A spreadsheet cannot tell a complete file from a prefix: the header is the only
+    // place the cut is visible, and it is always present.
+    expect(createCsvResponse("a", "f.csv").headers.get(EXPORT_TRUNCATED_HEADER)).toBe("false");
+    expect(
+      createCsvResponse("a", "f.csv", { truncated: true }).headers.get(EXPORT_TRUNCATED_HEADER),
+    ).toBe("true");
   });
 });
