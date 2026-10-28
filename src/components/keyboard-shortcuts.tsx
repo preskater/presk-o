@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
-import { shortcutForKey } from "./shortcut-keys";
+import { SHORTCUT_FALLBACKS, shortcutForKey, type ShortcutTarget } from "./shortcut-keys";
+
+/** The page's own target first, then the fallback when that element is absent. */
+function findTarget(target: ShortcutTarget): HTMLElement | null {
+  const direct = document.querySelector<HTMLElement>(`[data-shortcut="${target}"]`);
+  if (direct) return direct;
+
+  const fallback = SHORTCUT_FALLBACKS[target];
+  return fallback
+    ? document.querySelector<HTMLElement>(`[data-shortcut="${fallback}"]`)
+    : null;
+}
 
 /**
  * Listens for the global shortcuts and moves the focus; it never submits anything. The
@@ -21,7 +32,7 @@ export function KeyboardShortcuts() {
       });
       if (!target) return;
 
-      const element = document.querySelector<HTMLElement>(`[data-shortcut="${target}"]`);
+      const element = findTarget(target);
       if (!element) return;
 
       event.preventDefault();
