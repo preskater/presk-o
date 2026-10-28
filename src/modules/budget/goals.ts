@@ -183,6 +183,101 @@ export function computeGoalProgress(
   };
 }
 
+/**
+ * Footer totals of the goals table, grouped by currency.
+ *
+ * A total is only ever added inside one currency — the dashboard never converts. The
+ * global percentage is a **weighted** ratio, `Σcurrent ÷ Σtarget`, not the average of the
+ * per-goal percentages: averaging would let a 5 € goal weigh as much as a 5 000 € one. It
+ * follows the per-goal rule (non-positive current reads 0 %, one decimal, half-up).
+ *
+ * Unknowns are not zeros: as soon as one goal of the group has an unknown progress, the
+ * amounts are still summed for the known rows but `complete` turns false and the
+ * percentage is `null`, so the caller shows "—" instead of a rounder-looking figure.
+ * Likewise `monthlyContribution` is `null` when one goal's contribution is undefined (its
+ * deadline has passed) — a reached goal counts as 0, since it asks for nothing.
+ */
+export type GoalTotals = {
+  currency: Currency;
+  goalCount: number;
+  target: Decimal;
+  current: Decimal;
+  remaining: Decimal;
+  /** Σcurrent ÷ Σtarget × 100, one decimal; `null` when a progress is unknown. */
+  percentage: Decimal | null;
+  /** Σ of the monthly contributions still required; `null` when one is undefined. */
+  monthlyContribution: Decimal | null;
+  /** Earliest target date of the group: the closest deadline. */
+  nextDeadline: Date;
+  /** False when at least one goal of the group has an unknown progress. */
+  complete: boolean;
+};
+
+export function summariseGoalTotals(
+  rows: readonly { goal: GoalRecord; progress: GoalProgress }[],
+): Map<Currency, GoalTotals> {
+  const totals = new Map<Currency, GoalTotals>();
+
+  for (const { goal, progress } of rows) {
+    const total = totals.get(goal.currency) ?? {
+      currency: goal.currency,
+      goalCount: 0,
+      target: new Decimal(0),
+      current: new Decimal(0),
+      remaining: new Decimal(0),
+      percentage: null,
+      monthlyContribution: new Decimal(0),
+      nextDeadline: goal.targetDate,
+      complete: true,
+    };
+
+    total.goalCount += 1;
+    total.target = total.target.plus(goal.targetAmount);
+    if (goal.targetDate.getTime() < total.nextDeadline.getTime()) {
+      total.nextDeadline = goal.targetDate;
+    }
+
+    if (progress.kind === "UNKNOWN") {
+      total.complete = false;
+    } else {
+      total.current = total.current.plus(progress.current);
+      total.remaining = total.remaining.plus(progress.remaining);
+
+      if (progress.monthlyContribution === null) {
+        // Nothing left to plan for a reached goal; an undefined figure (deadline passed)
+        // makes the group's total undefined rather than silently ignored.
+        if (!progress.reached) {
+          total.monthlyContribution = null;
+        }
+      } else if (total.monthlyContribution !== null) {
+        total.monthlyContribution = total.monthlyContribution.plus(
+          progress.monthlyContribution,
+        );
+      }
+    }
+
+    totals.set(goal.currency, total);
+  }
+
+  for (const total of totals.values()) {
+    if (!total.complete || !total.target.greaterThan(0)) {
+      // An unknown goal would leave both the ratio and the monthly plan understated;
+      // "—" is the only honest answer for the group.
+      total.monthlyContribution = null;
+      continue;
+    }
+
+    total.percentage = total.current.lessThanOrEqualTo(0)
+      ? new Decimal(0)
+      : total.current
+          .dividedBy(total.target)
+          .times(100)
+          .toDecimalPlaces(1, Decimal.ROUND_HALF_UP);
+  }
+
+  return totals;
+}
+
 /** Input contract shared by the creation and the edition of a goal. */
 const goalBaseSchema = z.object({
   name: z.string().trim().min(1, "Le nom de l'objectif est requis.").max(120),

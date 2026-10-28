@@ -25,7 +25,9 @@ import {
   listWorkDays,
   sumTransactionsByCurrency,
 } from "@/modules/budget/repository";
+import { buildDailyBalance, carryOverNet } from "@/modules/budget/evolution";
 import { buildSimulatedBalances } from "@/modules/budget/projection";
+import { sumPerCurrency } from "@/modules/budget/table-totals";
 import {
   OCCURRENCE_STATUS_LABELS,
   plannedContributions,
@@ -46,9 +48,17 @@ import {
   type WorkDayRecord,
 } from "@/modules/budget/salary";
 import { DeleteRecurringButton } from "./delete-recurring-button";
+import { MonthBalanceChart } from "./month-balance-chart";
 import { OccurrenceActions } from "./occurrence-actions";
 import { RecurringEntryForm } from "./recurring-entry-form";
 import { SalaryBookingRow } from "./salary-booking-row";
+
+/** "01/10": short enough for an axis tick, precise enough for a tooltip. */
+const DAY_MONTH_FORMAT = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "UTC",
+  day: "2-digit",
+  month: "2-digit",
+});
 
 const TYPE_LABELS: Record<ForecastType, string> = {
   INCOME: "Recette",
@@ -91,6 +101,10 @@ export async function ForecastSection({
   const { year, month } = parseMonthKey(monthKey);
   const range = monthRange(year, month);
   const monthLabel = formatMonthLabel(year, month);
+  const previousKey = shiftMonthKey(monthKey, -1);
+  const previous = parseMonthKey(previousKey);
+  const previousRange = monthRange(previous.year, previous.month);
+  const previousLabel = formatMonthLabel(previous.year, previous.month);
 
   await ensureRecurringOccurrences(workspaceId, year, month);
 
@@ -118,6 +132,11 @@ export async function ForecastSection({
     upcomingBookings,
     recordedBefore,
     upcomingRecorded,
+    monthOpening,
+    monthRecorded,
+    previousOccurrences,
+    previousWorkDays,
+    previousSalaryBooking,
     editTarget,
   ] = await Promise.all([
     listRecurringEntries(workspaceId),
@@ -146,6 +165,19 @@ export async function ForecastSection({
     // window, then walks the window's recorded operations month by month.
     sumTransactionsByCurrency(workspaceId, { before: upcomingRange.from }),
     listTransactionsForSeries(workspaceId, { from: upcomingRange.from, to: upcomingRange.to }),
+    // The displayed month's own evolution: where its balance starts, and what is already
+    // recorded inside it (the chart never guesses a balance nothing was recorded in).
+    sumTransactionsByCurrency(workspaceId, { before: range.start }),
+    listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
+    // The month before: its simulation is where this month's simulated balance starts.
+    // Only what is still undecided counts — a decision became a recorded operation, and a
+    // booked salary is already inside the recorded opening balance.
+    listRecurringOccurrences(workspaceId, { from: previousRange.start, to: previousRange.end }),
+    listWorkDays(workspaceId, { from: previousRange.start, to: previousRange.end }),
+    findTransactionByExternalRef(
+      workspaceId,
+      salaryBookingRef(previous.year, previous.month),
+    ),
     editRecurringId ? findRecurringEntry(workspaceId, editRecurringId) : Promise.resolve(null),
   ]);
 
@@ -174,6 +206,119 @@ export async function ForecastSection({
     displayedRate !== null &&
     salaryBooking === null &&
     lastClickedDay !== null;
+
+  // What still waits for a decision this month, **with its date**: the same list feeds the
+  // footer of the échéances table and the day-by-day chart, so the two cannot disagree.
+  // The simulated salary is part of it while it is not registered — it is the first row of
+  // the table, and it lands on the last clicked day.
+  const pendingMovements: { currency: Currency; date: Date; amount: Decimal }[] = [];
+
+  for (const occurrence of pending) {
+    const entry = entriesById.get(occurrence.recurringId);
+    if (!entry) {
+      continue;
+    }
+
+    pendingMovements.push({
+      currency: currencyByAccount.get(entry.accountId) ?? DEFAULT_CURRENCY,
+      date: occurrence.date,
+      amount: signedForecastAmount(entry.type, entry.amount),
+    });
+  }
+
+  if (salaryPending && salarySetting && salarySummary && lastClickedDay) {
+    pendingMovements.push({
+      currency: salarySetting.currency,
+      date: lastClickedDay.date,
+      amount: salarySummary.totalAmount,
+    });
+  }
+
+  // Footer of the échéances table: signed net of what still waits for a decision, per
+  // currency (see `sumPerCurrency` for the currency rule).
+  const pendingTotals = sumPerCurrency(pendingMovements, (row) => row);
+
+  // Day-by-day balance of the displayed month, per currency. A currency is drawn when
+  // something was recorded in it, before the month or inside it: a currency nothing was
+  // ever recorded in has an **unknown** balance, not a zero, so no line is invented (the
+  // same rule as the simulated balance of the six-month schedule below). A truncated read
+  // would make the curve partial, so the chart is hidden rather than shown wrong.
+  const evolutionCurrencies = [
+    ...new Set<Currency>([
+      ...monthOpening.keys(),
+      ...monthRecorded.transactions.map((transaction) => transaction.currency),
+    ]),
+  ].sort();
+
+  // What the simulation had already counted at the end of the previous month and the
+  // ledger never received: its undecided échéances and its simulated (unbooked) salary.
+  // The simulated line starts from there instead of restarting from the recorded balance.
+  const previousContributions: ForecastContribution[] = [];
+
+  for (const occurrence of previousOccurrences) {
+    const entry = entriesById.get(occurrence.recurringId);
+    if (!entry) {
+      continue;
+    }
+
+    previousContributions.push({
+      currency: currencyByAccount.get(entry.accountId) ?? DEFAULT_CURRENCY,
+      type: entry.type,
+      amount: entry.amount,
+      status: occurrence.status,
+    });
+  }
+
+  const previousRate = resolveSalaryRate(rates, previous.year, previous.month);
+  const previousSalary = salaryMonthContribution({
+    rate:
+      salarySetting && previousRate
+        ? { hourlyRate: previousRate.hourlyRate, currency: salarySetting.currency }
+        : null,
+    days: previousWorkDays,
+    booking: previousSalaryBooking,
+  });
+
+  if (previousSalary) {
+    previousContributions.push(previousSalary);
+  }
+
+  const carryOverByCurrency = carryOverNet(previousContributions);
+
+  const monthBalances = monthRecorded.truncated
+    ? null
+    : evolutionCurrencies.map((currency) => {
+        // Absent from `monthOpening` means nothing was recorded before this month: the
+        // first recorded operation of a currency starts it at zero, like the schedule.
+        const opening = monthOpening.get(currency) ?? new Decimal(0);
+
+        return {
+          currency,
+          opening,
+          carryOver: carryOverByCurrency.get(currency) ?? new Decimal(0),
+          points: buildDailyBalance({
+            year,
+            month,
+            opening,
+            carryOver: carryOverByCurrency.get(currency) ?? new Decimal(0),
+            recorded: monthRecorded.transactions
+              .filter((transaction) => transaction.currency === currency)
+              .map((transaction) => ({
+                date: transaction.operationDate,
+                amount: transaction.amount,
+              })),
+            pending: pendingMovements
+              .filter((movement) => movement.currency === currency)
+              .map(({ date, amount }) => ({ date, amount })),
+          }),
+        };
+      });
+
+  // Currencies that only hold undecided échéances: no recorded operation to build a
+  // balance from, so the chart says so instead of drawing a line from zero.
+  const pendingOnlyCurrencies = [...new Set(pendingMovements.map((movement) => movement.currency))]
+    .filter((currency) => !evolutionCurrencies.includes(currency))
+    .sort();
 
   // The month's prévisionnel: every expected movement, whatever its source — the series
   // échéances and the salary prévision. Confirmed ones count (a prévision that came
@@ -284,13 +429,21 @@ export async function ForecastSection({
     };
   });
 
-  // The simulated balance: the currency's recorded cumulative before the window, advanced
-  // month by month. A truncated window read would make the monthly sums partial, so the
-  // column is left out rather than shown wrong.
+  // The simulated balance starts where the simulation actually stands: the recorded
+  // cumulative before the window **plus the report simulé of the displayed month** — its
+  // undecided échéances and its simulated salary, exactly what the chart above adds. Without
+  // it the first upcoming month would ignore the month just displayed and disagree with the
+  // chart. A truncated window read would make the monthly sums partial, so the column is
+  // left out rather than shown wrong.
+  const simulatedStart = new Map(recordedBefore);
+  for (const [currency, amount] of carryOverByCurrency) {
+    simulatedStart.set(currency, (simulatedStart.get(currency) ?? new Decimal(0)).plus(amount));
+  }
+
   const simulatedBalances = upcomingRecorded.truncated
     ? null
     : buildSimulatedBalances({
-        recordedBefore,
+        recordedBefore: simulatedStart,
         months: monthPlans.map((plan) => ({
           key: plan.key,
           recorded: plan.recorded,
@@ -366,6 +519,63 @@ export async function ForecastSection({
             </p>
           </div>
         ) : null}
+
+        {monthBalances === null ? (
+          <div className="mb-4">
+            <Notice tone="warning">
+              Trop d&apos;opérations enregistrées sur {monthLabel} pour tracer l&apos;évolution
+              du solde : la courbe est masquée plutôt que montrée partielle.
+            </Notice>
+          </div>
+        ) : monthBalances.length > 0 ? (
+          <section className="mb-6 flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <h3 className="text-sm font-semibold">Évolution du solde — {monthLabel}</h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Trois courbes, jour par jour : le solde enregistré (trait plein), les
+                échéances du mois cumulées depuis zéro (pointillé bleu) et le simulé cumulé
+                — le report simulé du mois précédent, le solde enregistré et ces échéances,
+                salaire simulé compris (pointillé ambre), c&apos;est-à-dire le solde simulé
+                de l&apos;échéancier, accumulé jour après jour. Le report reprend ce que la
+                simulation avait déjà compté et que le compte n&apos;a pas reçu — échéances
+                non tranchées et salaire simulé non enregistré du mois précédent — sans quoi
+                la simulation repartirait chaque mois du solde enregistré et perdrait le mois
+                d&apos;avant. L&apos;écart entre le solde enregistré et le simulé cumulé est
+                exactement ce qui n&apos;est pas encore confirmé : rien de tout cela
+                n&apos;entre dans un solde réel avant la décision.
+              </p>
+            </div>
+            {monthBalances.map((balance) => (
+              <MonthBalanceChart
+                key={balance.currency}
+                currency={balance.currency}
+                opening={balance.opening.toNumber()}
+                carryOver={balance.carryOver.toNumber()}
+                previousMonthLabel={previousLabel}
+                rows={balance.points.map((point) => ({
+                  day: point.day,
+                  label: DAY_MONTH_FORMAT.format(point.date),
+                  recorded: point.recorded.toNumber(),
+                  echeances: point.echeances.toNumber(),
+                  simulated: point.projected.toNumber(),
+                }))}
+              />
+            ))}
+            {pendingOnlyCurrencies.length > 0 ? (
+              <Notice tone="info">
+                Aucune opération enregistrée en {pendingOnlyCurrencies.join(", ")} : le
+                solde de départ est inconnu, donc aucune courbe n&apos;est tracée. Les
+                échéances en attente de cette devise restent dans le tableau ci-dessous.
+              </Notice>
+            ) : null}
+          </section>
+        ) : (
+          <p className="mb-6 text-xs text-zinc-500 dark:text-zinc-400">
+            Aucune opération enregistrée en {monthLabel} : il n&apos;y a pas encore de
+            solde à faire évoluer. Confirmer une échéance ci-dessous crée l&apos;opération
+            et fait apparaître la courbe.
+          </p>
+        )}
 
         {pending.length === 0 && !salaryPending ? (
           <Notice tone="info">
@@ -478,6 +688,19 @@ export async function ForecastSection({
                 );
               })}
             </tbody>
+            <tfoot>
+              {[...pendingTotals.values()].map(({ currency, amount }) => (
+                <tr key={currency}>
+                  <th scope="row" colSpan={5} className={`${tdClass} text-right font-semibold`}>
+                    Total en attente ({currency})
+                  </th>
+                  <td className={`${tdClass} whitespace-nowrap text-right font-semibold tabular-nums`}>
+                    {formatMoney({ amount, currency })}
+                  </td>
+                  <td className={tdClass} />
+                </tr>
+              ))}
+            </tfoot>
           </TableShell>
         )}
 
@@ -840,9 +1063,10 @@ export async function ForecastSection({
           </TableShell>
 
             <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-              Solde simulé : cumul enregistré de la devise avant la période, avancé mois
-              par mois par les opérations déjà saisies et les mouvements prévus (échéances
-              en attente, salaire simulé) — chaque mouvement ne compte qu&apos;une fois.
+              Solde simulé : cumul enregistré de la devise avant la période, report simulé
+              du mois affiché compris (ses échéances non tranchées et son salaire simulé),
+              avancé mois par mois par les opérations déjà saisies et les mouvements prévus
+              — chaque mouvement ne compte qu&apos;une fois.
               « — » : aucune opération enregistrée dans cette devise, un solde inconnu
               n&apos;est pas un zéro.
             </p>

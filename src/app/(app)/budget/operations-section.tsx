@@ -16,6 +16,7 @@ import {
   listCategories,
   listLabelHistory,
   listTransactions,
+  sumTransactionAmountsByCurrency,
   TRANSACTION_PAGE_SIZE,
   type TransactionSort,
 } from "@/modules/budget/repository";
@@ -89,6 +90,7 @@ export async function OperationsSection({
     categories,
     transactions,
     totalCount,
+    transactionTotals,
     labelHistory,
     editTarget,
     editLink,
@@ -104,6 +106,9 @@ export async function OperationsSection({
       take: TRANSACTION_PAGE_SIZE,
     }),
     countTransactions(workspaceId, readFilters),
+    // Signed total of **every filtered row**, not of the displayed page: the footnote
+    // must not shrink when the reader turns a page.
+    sumTransactionAmountsByCurrency(workspaceId, readFilters),
     // Deliberately unfiltered: a suggestion is worth offering whatever month or
     // account is being displayed.
     listLabelHistory(workspaceId),
@@ -184,6 +189,13 @@ export async function OperationsSection({
     }
     return `/budget?${params.toString()}`;
   };
+
+  const transactionsTotalLabels = [...transactionTotals.entries()].map(
+    ([currency, amount]) => ({
+      currency,
+      amountLabel: formatMoney({ amount, currency }),
+    }),
+  );
 
   const rows: OperationsTableRow[] = transactions.map((transaction) => ({
     id: transaction.id,
@@ -352,6 +364,7 @@ export async function OperationsSection({
           <>
             <OperationsTable
               rows={rows}
+              totals={transactionsTotalLabels}
               accounts={accounts}
               categories={categories}
               listHref={listHref}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Fragment } from "react";
+import type Decimal from "decimal.js";
 import {
   Badge,
   Card,
@@ -14,10 +15,12 @@ import { formatMoney, type Currency } from "@/lib/money";
 import {
   GOAL_STATUS_LABELS,
   computeGoalProgress,
+  summariseGoalTotals,
   toGoalFormInitialValues,
   type GoalProgress,
   type GoalRecord,
   type GoalStatus,
+  type GoalTotals,
 } from "@/modules/budget/goals";
 import {
   findGoal,
@@ -51,6 +54,30 @@ function UnknownCell() {
   return <span title="Donnée inconnue">—</span>;
 }
 
+/** One progress bar, capped at 100 %; shared by the row cell and the footer total. */
+function ProgressBar({ percentage, reached }: { percentage: Decimal; reached: boolean }) {
+  const width = Math.min(100, Math.max(0, percentage.toNumber()));
+
+  return (
+    <span className="flex items-center gap-2">
+      <span
+        className="block h-1.5 w-24 rounded-full bg-zinc-200 dark:bg-zinc-800"
+        aria-hidden="true"
+      >
+        <span
+          className={`block h-1.5 rounded-full ${
+            reached ? "bg-emerald-600" : "bg-zinc-900 dark:bg-zinc-100"
+          }`}
+          style={{ width: `${width}%` }}
+        />
+      </span>
+      <span className="text-xs tabular-nums">
+        {PERCENT_FORMAT.format(percentage.toNumber())} %
+      </span>
+    </span>
+  );
+}
+
 /** Amount and percentage, side by side, with a bar that caps at 100 %. */
 function ProgressCell({ goal, progress }: { goal: GoalRecord; progress: GoalProgress }) {
   if (progress.kind === "UNKNOWN") {
@@ -58,8 +85,6 @@ function ProgressCell({ goal, progress }: { goal: GoalRecord; progress: GoalProg
       <span className="text-xs text-amber-700 dark:text-amber-400">{progress.reason}</span>
     );
   }
-
-  const width = Math.min(100, Math.max(0, progress.percentage.toNumber()));
 
   return (
     <div className="flex min-w-44 flex-col gap-1">
@@ -69,22 +94,37 @@ function ProgressCell({ goal, progress }: { goal: GoalRecord; progress: GoalProg
           / {formatMoney({ amount: goal.targetAmount, currency: goal.currency })}
         </span>
       </span>
-      <span className="flex items-center gap-2">
-        <span
-          className="block h-1.5 w-24 rounded-full bg-zinc-200 dark:bg-zinc-800"
-          aria-hidden="true"
-        >
-          <span
-            className={`block h-1.5 rounded-full ${
-              progress.reached ? "bg-emerald-600" : "bg-zinc-900 dark:bg-zinc-100"
-            }`}
-            style={{ width: `${width}%` }}
-          />
-        </span>
-        <span className="text-xs tabular-nums">
-          {PERCENT_FORMAT.format(progress.percentage.toNumber())} %
+      <ProgressBar percentage={progress.percentage} reached={progress.reached} />
+    </div>
+  );
+}
+
+/**
+ * Footer cell of the « Progression » column: the group's weighted accomplishment,
+ * `Σcurrent ÷ Σtarget`, or "—" when one goal's progress is unknown (see
+ * `summariseGoalTotals`).
+ */
+function TotalProgressCell({ totals }: { totals: GoalTotals }) {
+  if (totals.percentage === null) {
+    return (
+      <span title="Au moins un objectif a une progression inconnue : l'avancement global serait faussé.">
+        —
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex min-w-44 flex-col gap-1">
+      <span className="tabular-nums">
+        {formatMoney({ amount: totals.current, currency: totals.currency })}{" "}
+        <span className="text-zinc-500 dark:text-zinc-400">
+          / {formatMoney({ amount: totals.target, currency: totals.currency })}
         </span>
       </span>
+      <ProgressBar
+        percentage={totals.percentage}
+        reached={totals.remaining.lessThanOrEqualTo(0)}
+      />
     </div>
   );
 }
@@ -186,6 +226,10 @@ export async function GoalsSection({
 
   const today = toDateOnlyString(new Date());
   const listHref = "/budget?tab=goals";
+
+  // Footer of the goals table: every non-text column is aggregated per currency, the
+  // percentage being the group's weighted accomplishment (see `summariseGoalTotals`).
+  const totalsByCurrency = summariseGoalTotals(rows);
 
   return (
     <Card
@@ -341,6 +385,51 @@ export async function GoalsSection({
                 </Fragment>
               ))}
             </tbody>
+            <tfoot>
+              {[...totalsByCurrency.values()].map((totals) => (
+                <tr key={totals.currency}>
+                  <th scope="row" className={`${tdClass} text-right align-middle font-semibold`}>
+                    Total ({totals.currency})
+                  </th>
+                  <td className={`${tdClass} whitespace-nowrap text-xs text-zinc-600 dark:text-zinc-400`}>
+                    {totals.goalCount} objectif{totals.goalCount > 1 ? "s" : ""}
+                  </td>
+                  <td className={tdClass}>
+                    <TotalProgressCell totals={totals} />
+                  </td>
+                  <td className={`${tdClass} whitespace-nowrap text-right font-semibold tabular-nums`}>
+                    {totals.complete ? (
+                      formatMoney({ amount: totals.remaining, currency: totals.currency })
+                    ) : (
+                      <span title="Au moins un objectif a une progression inconnue : le total serait incomplet.">
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${tdClass} whitespace-nowrap font-semibold tabular-nums`}>
+                    {totals.monthlyContribution !== null ? (
+                      formatMoney({
+                        amount: totals.monthlyContribution,
+                        currency: totals.currency,
+                      })
+                    ) : (
+                      <span title="Au moins un objectif a une contribution mensuelle non définie (échéance passée).">
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${tdClass} whitespace-nowrap font-semibold`}>
+                    <span
+                      className="text-xs text-zinc-500 dark:text-zinc-400"
+                      title="Échéance la plus proche du groupe"
+                    >
+                      {formatDateOnly(totals.nextDeadline)}
+                    </span>
+                  </td>
+                  <td className={tdClass} />
+                </tr>
+              ))}
+            </tfoot>
           </TableShell>
         )}
       </div>
