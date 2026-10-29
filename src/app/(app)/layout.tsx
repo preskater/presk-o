@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
-import { MainNav } from "@/components/main-nav";
+import { MainNav, MobileNav, type NavLink } from "@/components/main-nav";
+import { SearchForm } from "@/components/search-form";
 import { requireUser } from "@/lib/auth/guard";
 import { moduleNavLinks } from "@/modules/catalog/catalog";
 import { signOutAction } from "../login/actions";
@@ -26,34 +27,55 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     </form>
   );
 
+  // The brand is the link home: listing "Tableau de bord" again in the links made the
+  // header read as two competing entry points.
+  const links: NavLink[] = [
+    ...moduleNavLinks(user.workspace.modules),
+    { href: "/alerts", label: "Alertes" },
+    { href: "/modules", label: "Modules" },
+    { href: "/account", label: "Compte" },
+  ];
+
+  const accountControls = (
+    <>
+      <span className="max-w-44 truncate text-xs text-zinc-500 dark:text-zinc-400">
+        {user.email}
+      </span>
+      {signOut}
+    </>
+  );
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="relative border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <Link href="/dashboard" className="font-semibold tracking-tight">
-            Tableau de bord
-          </Link>
+        <div className="mx-auto w-full max-w-6xl px-4 pt-3 pb-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href="/dashboard" className="font-semibold tracking-tight">
+              Tableau de bord
+            </Link>
 
-          <MainNav
-            links={[
-              { href: "/dashboard", label: "Tableau de bord" },
-              ...moduleNavLinks(user.workspace.modules),
-              { href: "/alerts", label: "Alertes" },
-              { href: "/modules", label: "Modules" },
-              { href: "/account", label: "Compte" },
-            ]}
-          >
-            {/* Small screens: the account controls live in the burger menu. */}
-            <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-              <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{user.email}</span>
-              {signOut}
-            </div>
-          </MainNav>
+            {/* The one search entry point. Full width under the title on phones, inline
+                from `sm` up, so it never competes with the navigation for one row. */}
+            <SearchForm
+              id="header-search"
+              shortcut
+              className="order-last w-full sm:order-none sm:ml-auto sm:w-72"
+            />
 
-          <div className="hidden items-center gap-3 lg:flex">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">{user.email}</span>
-            {signOut}
+            <div className="hidden items-center gap-3 lg:flex">{accountControls}</div>
+
+            <MobileNav links={links}>
+              {/* Small screens: the account controls live in the burger menu. */}
+              <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+                <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                  {user.email}
+                </span>
+                {signOut}
+              </div>
+            </MobileNav>
           </div>
+
+          <MainNav links={links} className="mt-1" />
         </div>
       </header>
 

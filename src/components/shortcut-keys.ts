@@ -1,9 +1,19 @@
 /**
  * Global keyboard shortcuts (UX-02): `n` jumps to a new-transaction form, `/` to the
  * transaction search. Each targets the element carrying `data-shortcut="<target>"`; a
- * page without that element simply ignores the key.
+ * page without that element falls back to the next target, and a page without any
+ * simply ignores the key.
  */
-export type ShortcutTarget = "new-transaction" | "search";
+export type ShortcutTarget = "new-transaction" | "search" | "global-search";
+
+/**
+ * Target tried when the page has no element for the requested one. `/` keeps the
+ * budget's « Libellé contient » field first; elsewhere it reaches the header's global
+ * search (UX-01).
+ */
+export const SHORTCUT_FALLBACKS: Partial<Record<ShortcutTarget, ShortcutTarget>> = {
+  search: "global-search",
+};
 
 type KeyEventLike = {
   key: string;

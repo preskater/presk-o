@@ -135,6 +135,13 @@ Working today:
   repository answers 304 and is not rewritten, and the page shows when each was
   checked versus changed. GitLab stays on project metadata, on purpose — pipelines
   included.
+- Global search (`/search`, with its field in the header of every page): one bounded
+  query across transactions, accounts, properties, projects, issues and milestones,
+  grouped by type, with the `/` shortcut. Only the modules active in the workspace are
+  searched, every read is owner-scoped, each type is limited to five rows (the page
+  says when more exist and links to the module), and provider results come from the
+  stored snapshots with their state stated — not connected, never synchronised, failed
+  or stale — instead of being presented as current.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".
@@ -367,7 +374,7 @@ src/
   app/                 # pages, layouts, Route Handlers, Server Actions
   components/          # interface components
   modules/             # business rules, per module
-    identity/ budget/ real-estate/ integrations/ dashboard/
+    identity/ budget/ real-estate/ integrations/ alerts/ catalog/ search/ dashboard/
   lib/                 # database, configuration, cross-cutting utilities
   jobs/                # synchronisation tasks run server-side
   generated/prisma/    # generated client, not committed

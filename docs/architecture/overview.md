@@ -19,6 +19,7 @@ the pages that consume it.
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
 | `alerts` | Deterministic warning engine: rule configuration, one bounded evaluation pass, episode lifecycle (fingerprint suppression, dismissal). Rules sit next to their data: `budget/alerts.ts`, `integrations/alerts.ts`, `real-estate/alerts.ts`. | `domain.ts`, `lifecycle.ts`, `refresh.ts`, `repository.ts` |
+| `search` | Global search across the owner's own entities and provider snapshots, one bounded and grouped result set per query. | `domain.ts`, `repository.ts` |
 | `dashboard` | Read-only aggregation for the home page. | `queries.ts` |
 
 Cross-cutting code sits in `src/lib` (`db`, `env`, `money`, `dates`, `csv`,
@@ -84,7 +85,28 @@ Convenience paths reuse the write path above; none of them is a second one.
 - **Keyboard**: `n` focuses the label of the page's creation form, `/` the « Libellé
   contient » search. Targets carry `data-shortcut`; keys typed in a field or with
   Ctrl, Cmd or Alt are ignored, and a page without the target ignores the key. The
-  shortcuts only move the focus, they never submit.
+  shortcuts only move the focus, they never submit. When a page has no local search
+  field, `/` falls back to the header's global search (`SHORTCUT_FALLBACKS`).
+
+### Global search (UX-01)
+
+One GET form in the header of every private page, plus its `/search` page: the query is
+read on the server, never in the browser.
+
+- **Scope follows the modules.** `searchableKinds` maps each kind to its module
+  (`budget` → transactions and accounts, `real-estate` → properties, `development` →
+  projects, issues, milestones); a disabled module is not searched at all.
+- **Every read is owner-scoped**: `workspaceId` on the owner's own rows, and
+  `connection: { workspaceId }` on provider snapshots. No provider is contacted per
+  query: results come from the stored snapshots (DR-02).
+- **Bounded, not paginated.** Each kind reads `limit + 1` rows and returns at most the
+  limit, so "more results exist" costs one row rather than a count query per kind. The
+  page states the bound and links to the module (`/budget?all=1&q=…` for a text search).
+- **States stay distinct**: no result, provider not connected, never synchronised, and
+  a failed or stale synchronisation each read differently. A stale snapshot is labelled
+  as such instead of being shown as current.
+- `normalizeSearchQuery` trims and collapses whitespace, requires two characters and
+  truncates a long paste; nothing is read for a shorter query.
 
 ### Deletion
 
