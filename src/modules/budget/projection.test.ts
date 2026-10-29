@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import type { Currency } from "@/lib/money";
+import { buildDailyBalance } from "./evolution";
 import { buildSimulatedBalances, projectAccountBalance } from "./projection";
 
 /** Fictitious values only. */
@@ -128,5 +129,37 @@ describe("buildSimulatedBalances", () => {
     // A later month's copy is independent: editing it cannot rewrite November.
     result[1]?.balances.set("USD", eur("999"));
     expect(result[0]?.balances.get("USD")?.toFixed(2)).toBe("100.00");
+  });
+});
+
+describe("the schedule and the daily chart share one definition", () => {
+  it("ends the month on the same simulated balance", () => {
+    // The chart's opening is the recorded balance; the schedule starts from it plus the
+    // previous month's report simulé. Both then add the month's recorded and pending nets,
+    // so the last point of the chart must equal the schedule's row.
+    const recording = new Map<Currency, Decimal>([["EUR", new Decimal("1000.00")]]);
+    const carryOver = new Decimal("90.00");
+    const recordedNet = new Map<Currency, Decimal>([["EUR", new Decimal("-200.00")]]);
+    const pendingNet = new Map<Currency, Decimal>([["EUR", new Decimal("-150.00")]]);
+
+    const start = new Map(recording);
+    start.set("EUR", start.get("EUR")!.plus(carryOver));
+
+    const [november] = buildSimulatedBalances({
+      recordedBefore: start,
+      months: [{ key: "2026-11", recorded: recordedNet, pending: pendingNet }],
+    });
+
+    const points = buildDailyBalance({
+      year: 2026,
+      month: 11,
+      opening: recording.get("EUR")!,
+      carryOver,
+      recorded: [{ date: new Date(Date.UTC(2026, 10, 3)), amount: new Decimal("-200.00") }],
+      pending: [{ date: new Date(Date.UTC(2026, 10, 20)), amount: new Decimal("-150.00") }],
+    });
+
+    expect(points[points.length - 1].projected.toFixed(2)).toBe("740.00");
+    expect(november.balances.get("EUR")?.toFixed(2)).toBe("740.00");
   });
 });

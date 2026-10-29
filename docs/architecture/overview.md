@@ -147,6 +147,22 @@ asked for: a cascade here would silently change what a property is worth.
   stored. One owner carries at most one budget per `(category, month, currency)`
   tuple — the unique index that rejects a duplicate also lets the same category hold a
   EUR plan and a USD plan at once. Amounts are never converted between currencies.
+- **Table footers** add one total row per currency, never a cross-currency figure, and
+  aggregate **every non-text column**: the accounts table totals the recorded balance, the
+  low-balance threshold, the pending échéances and the projected balance, and counts the
+  accounts (active/archived) and the date of their latest operation; the goals table totals
+  the « Reste » and the monthly contributions, counts the goals and shows the closest
+  deadline; the budgets table totals the planned amounts and the rolling average; the
+  operations table totals the filtered rows (every filtered row, not only the displayed
+  page); the échéances table totals what still waits for a decision.
+  The goals' « Progression » footer is the group's **weighted accomplishment**,
+  `Σcurrent ÷ Σtarget × 100` (one decimal, half-up — the same rule as a single goal, and
+  never the mean of the row percentages, which would weigh a 5 € goal like a 5 000 € one);
+  a non-positive sum reads 0 %.
+  A footer reads « — » as soon as one of its rows holds an unknown amount (an account with
+  no operation, an automatic threshold, a goal without a source or with a passed deadline,
+  a category without an average): the known rows are still summed, but an unknown is never
+  counted as a zero.
 - **Salary simulation** lives in the budget module and writes nothing by itself: one
   hourly rate per owner, and one `WorkDay` per clicked day whose status is the level
   reached — `PLANNED` feeds the simulated budget, `WORKED` the amount really earned, and a
@@ -615,9 +631,46 @@ asked for: a cascade here would silently change what a property is worth.
     make the bars fail to add up. The
     smallest categories are merged into one "Autres" line once the row budget is
     reached, and the total stays exact.
-  Charts are plain server-rendered markup, with the exact figures printed next to the
-  drawing: no charting dependency, no client-side rendering, and nothing is lost by a
-  reader who cannot use a chart.
+- Prévisions chart — *the month's balance, day after day* (« Prévisions » tab), **three
+  lines** on one axis:
+  - *solde enregistré* — the currency's balance strictly before the month, advanced by each
+    recorded operation;
+  - *échéances du mois* — the month's undecided movements as their own cumulative from zero
+    (their weight so far, not a balance);
+  - *simulé cumulé* — **report simulé** + recorded + échéances, i.e. the simulated balance
+    the six-month schedule shows, accumulated day by day.
+
+  The **report simulé** is what the simulation had already counted and the ledger never
+  received: the previous month's undecided échéances and its simulated (unbooked) salary.
+  Without it the simulated line would restart from the recorded balance every month and
+  silently drop the month before; a decided occurrence or a booked salary is a recorded
+  operation and is therefore never carried a second time. It covers the **immediately
+  preceding month** only — bounded and predictable; chaining further back would need a
+  documented start of the simulation. The **six-month schedule starts from the same
+  carried report**, so the chart's last point and the schedule's row for that month give
+  the same simulated balance (`projection.test.ts` guards the invariant).
+
+  The gap between the recorded line and the simulé cumulé is exactly what waits for a
+  decision, so a projection is never drawn as money. A movement dated outside the month is
+  refused rather than drawn on another day; one point per calendar day, empty days
+  included; the start, the carried report, both month-end figures, the échéances total and
+  the lowest point of the simulé cumulé are printed under the drawing. The legend is
+  interactive: each line can be hidden on its own (hiding two isolates the third), the axis
+  rescales to the lines still shown, and the tooltip lists only those; « Tout afficher »
+  restores all three. Hidden state is per chart and never stored. A currency nothing
+  was ever recorded in has no balance to draw (a currency with in-month operations only
+  starts at zero, like the six-month schedule); a truncated window read hides the chart
+  instead of showing a partial curve. The series is built by `buildDailyBalance`
+  (`modules/budget/evolution.ts`).
+
+The Prévisions chart is the one **client-side** chart: it uses the shadcn/ui chart
+primitives (`components/ui/chart.tsx`) on top of Recharts, with a step line per series,
+tooltips and a legend. The trade-off, accepted deliberately: it adds a client bundle and
+hydration where the rest of the dashboard has none, in exchange for a conventional,
+interactive chart. The numbers it draws are still computed on `Decimal` server-side and
+sent as plain numbers; only formatting happens in the browser, and the exact figures
+remain printed under the drawing. The two other budget charts (trend, category breakdown)
+stay plain server-rendered SVG with no dependency.
 
 An indicator is only displayed once its definition is written down, which is
 what this section is for.

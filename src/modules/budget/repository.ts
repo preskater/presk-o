@@ -255,6 +255,25 @@ export async function countTransactions(
   return getPrisma().transaction.count({ where: transactionWhere(workspaceId, filters) });
 }
 
+/** Signed transaction amounts for the full filtered result, grouped by currency. */
+export async function sumTransactionAmountsByCurrency(
+  workspaceId: string,
+  filters: TransactionFilters = {},
+): Promise<Map<Currency, Decimal>> {
+  const rows = await getPrisma().transaction.groupBy({
+    by: ["currency"],
+    where: transactionWhere(workspaceId, filters),
+    _sum: { amount: true },
+  });
+
+  return new Map(
+    rows.map((row) => [
+      assertCurrency(row.currency),
+      new Decimal(row._sum.amount?.toString() ?? "0"),
+    ]),
+  );
+}
+
 /**
  * Distinct labels the owner already typed, bounded before being ranked.
  *
