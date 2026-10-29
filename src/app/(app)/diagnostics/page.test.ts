@@ -25,12 +25,17 @@ describe("diagnostics page", () => {
     expect(runDiagnosticsMock).not.toHaveBeenCalled();
   });
 
-  it("runs the diagnostics for the signed-in owner only", async () => {
-    requireUserMock.mockResolvedValue({ id: "owner-fixture", email: "owner@example.test", name: null });
+  it("runs the diagnostics for the signed-in owner's workspace only", async () => {
+    requireUserMock.mockResolvedValue({
+      id: "owner-fixture",
+      email: "owner@example.test",
+      name: null,
+      workspace: { id: "workspace-fixture" },
+    });
     runDiagnosticsMock.mockResolvedValue({ status: "ok", checks: [], generatedAt: "2026-10-23T12:00:00.000Z" });
 
     await DiagnosticsPage();
-    expect(runDiagnosticsMock).toHaveBeenCalledWith("owner-fixture");
+    expect(runDiagnosticsMock).toHaveBeenCalledWith("workspace-fixture");
   });
 
   it("is never served from a static cache", () => {

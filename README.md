@@ -183,8 +183,8 @@ npm run db:seed          # creates the owner from SEED_OWNER_* variables
 npm run dev              # http://localhost:3000
 ```
 
-Ports 8888 (proxy), 3000 (application) and 5432 may already be used by another local
-project. Use `PORT=3100 npm run dev`, set `PROXY_PORT` for the proxy (see
+Ports 3000 (application or proxy) and 5432 may already be used by another local project.
+Use `PORT=3100 npm run dev`, set `APP_PORT` or `PROXY_PORT` (see
 [The proxy and the address you browse](#the-proxy-and-the-address-you-browse)), and set
 `POSTGRES_PORT` in `.env` (keeping `DATABASE_URL` consistent) when 5432 is taken.
 
@@ -239,14 +239,18 @@ recovery, on purpose.
 
 ### The proxy and the address you browse
 
-The `full` stack puts a small reverse proxy in front of the application: it is the
-front door, and the address to type is `http://dashboard.localhost:8888`. The proxy
-comes from `compose.override.yaml`, which Docker Compose loads automatically; without
-that file, the application port is published directly (`APP_BIND_HOST:APP_PORT`), as
-after the hotfix that removed the proxy.
+The `full` stack can put a small reverse proxy in front of the application: it is the
+front door, and the address to type is the origin described by `APP_HOST`, published on
+`PROXY_PORT`. The proxy comes from `compose.override.yaml`, which Docker Compose loads
+automatically; without that file, the application port is published directly
+(`APP_BIND_HOST:APP_PORT`), as after the hotfix that removed the proxy.
+
+`.env.example` describes `http://localhost:3000` / `3000`, which works for direct access
+and through the proxy. To use the origin the override falls back to when the variables
+are unset, set all three to `http://dashboard.localhost:8888` / `8888`.
 
 ```sh
-# AUTH_URL, APP_HOST and PROXY_PORT already describe that origin in .env
+# AUTH_URL, APP_HOST and PROXY_PORT must describe one single origin in .env
 docker compose --profile full up -d --build
 ```
 
@@ -255,16 +259,16 @@ Remove or rename `compose.override.yaml` to go back to direct access.
 Three variables describe that single origin, and they are not independent. A mismatch
 is invisible in `docker compose ps`: it only shows up in the browser.
 
-- `PROXY_PORT` is the port published on the host, 8888 by default.
+- `PROXY_PORT` is the port published on the host: `3000` in `.env.example`, and the
+  fallback when the variable is unset is `8888`.
 - `APP_HOST` is the site address the proxy answers for. It carries the same port,
   because Caddy listens on the port of its site address.
 - `AUTH_URL` is the origin the application is told to use for absolute URLs, the
   sign-in callback in particular.
 
-The application's own port (3000) stays published on loopback for debugging: it serves
-the same process, but not the origin Auth.js was told about. It is also a different
-host (`localhost`, not `dashboard.localhost`), so it is a separate session: useful for
-`curl`, not for signing in.
+Without the override, the application is published on `APP_BIND_HOST:APP_PORT` (3000 by
+default). With it, the app is no longer published at all: the proxy is the only entry
+point, and the app is reachable from the Compose network with `docker compose exec app`.
 
 `APP_HOST` also decides the scheme. `http://dashboard.localhost:8888` serves plain
 HTTP, which is what you want locally: there is no certificate to install. A bare
@@ -323,8 +327,8 @@ door refusing connections while `app` and `db` looked healthy — the proxy depe
 `app`, so the two belong together. `docker compose up -d` with no profile still starts
 PostgreSQL only.
 
-Publishing 8888 is now part of the full stack. Set `PROXY_PORT` if something else
-already holds it.
+Publishing the proxy port is now part of the full stack. Set `PROXY_PORT` if something
+else already holds it.
 
 ## Environment variables
 
@@ -445,13 +449,23 @@ install, generate the Prisma client, lint, type check, unit tests, apply the
 migrations on a fresh PostgreSQL service container, then build. The secrets it uses
 are fictitious values that only let the build run.
 
+## Operations
+
+Operational runbooks live in [`docs/operations/`](docs/operations/README.md): local
+setup, migration deployment, backup and restore, provider token rotation, failed
+synchronisation recovery, smoke verification and production diagnostics. They use the
+repository's own scripts and fictitious values only.
+
 ## Before production
 
 - Configure HTTPS through a reverse proxy; keep PostgreSQL off the public
   network.
 - Provide real secrets through the environment, never through an image layer.
 - Schedule `infra/backups/backup.sh`, store backups encrypted off the host, and
-  run `infra/backups/restore.sh` as a restore test. See `infra/backups/README.md`.
+  run `infra/backups/verify.sh` on each one. The full procedure, including a restore
+  rehearsal and a recovery sequence, is in
+  [`docs/operations/backup-restore.md`](docs/operations/backup-restore.md); script
+  internals are in `infra/backups/README.md`.
 - Apply migrations and create the owner before the application starts: the
   `migrate` and `seed` services do both, or run them alone with
   `docker compose --profile full run --rm migrate` / `run --rm seed`.

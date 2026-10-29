@@ -4,10 +4,16 @@ Scripts and procedures only. **Never commit an actual backup**: a dump contains
 personal financial data. Dumps, checksums and metadata are git-ignored and excluded
 from the Docker build context; CI never uploads one as an artifact.
 
+The operator procedures that use these scripts — including a restore rehearsal on a
+throwaway container and the recovery sequence for a deployment — are in
+[../../docs/operations/backup-restore.md](../../docs/operations/backup-restore.md).
+
 - `backup.sh` — logical `pg_dump` (custom format) written to this directory on the host,
   with a checksum and a metadata file next to it.
 - `verify.sh` — proves a dump is restorable by restoring it into a throwaway container.
 - `restore.sh` — restores a dump into a target database, recreating it first.
+  `DB_CONTAINER=<name>` restores into a throwaway container instead of the compose `db`
+  service, which is how a recovery is rehearsed without touching real data.
 - `test-backup-cycle.sh` — end-to-end test of the above on a throwaway stack (CI).
 
 ## Procedure
@@ -55,7 +61,8 @@ take a new backup and check the `pg_dump` and server versions in its `.json`.
 The `backup-restore` job of `.github/workflows/ci.yml` runs
 `./infra/backups/test-backup-cycle.sh` on every pull request: it seeds a throwaway
 database with fictitious data (real migrations, fictitious owner), backs it up,
-verifies it, and checks that a truncated archive is rejected by its checksum and that
+verifies it, rehearses `restore.sh` on another database of the same throwaway
+container, and checks that a truncated archive is rejected by its checksum and that
 a corrupt archive with a recomputed checksum is rejected by the restore itself. A
 failure there fails the pull request.
 

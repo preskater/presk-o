@@ -62,10 +62,10 @@ describe("runDiagnostics", () => {
     expect(report.checks.find((entry) => entry.id === "backups")?.status).toBe("ok");
   });
 
-  it("passes the owner to the connection probe", async () => {
+  it("passes the workspace to the connection probe", async () => {
     const connections = vi.fn(async () => []);
-    await runDiagnostics("owner-fixture", healthy({ connections }), NOW);
-    expect(connections).toHaveBeenCalledWith("owner-fixture");
+    await runDiagnostics("workspace-fixture", healthy({ connections }), NOW);
+    expect(connections).toHaveBeenCalledWith("workspace-fixture");
   });
 
   it("redaction: no secret, nor any part of one, reaches the report", async () => {

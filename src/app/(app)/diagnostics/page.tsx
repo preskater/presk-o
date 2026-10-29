@@ -22,7 +22,7 @@ const STATUS: Record<CheckStatus, { label: string; tone: "positive" | "warning" 
  */
 export default async function DiagnosticsPage() {
   const user = await requireUser();
-  const report = await runDiagnostics(user.id);
+  const report = await runDiagnostics(user.workspace.id);
 
   return (
     <>

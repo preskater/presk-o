@@ -8,7 +8,9 @@
 #    applies the real migrations and seeds FICTITIOUS data. It never touches the
 #    dashboard database or its volume.
 # 2. backup.sh dumps it into a temporary directory; verify.sh must accept it.
-# 3. Failure paths: a truncated copy must fail on its checksum, and a truncated copy
+# 3. restore.sh must load the same dump into another database of the throwaway
+#    container, with the table and migration counts verify.sh reported.
+# 4. Failure paths: a truncated copy must fail on its checksum, and a truncated copy
 #    whose checksum was recomputed must fail on the restore itself.
 # Everything is removed at the end. No dump ever leaves the temporary directory.
 #
@@ -77,6 +79,23 @@ DUMP="$(ls "${WORK}"/dashboard-*.dump)"
 [ -f "${DUMP%.dump}.json" ] || { echo "FAIL: no metadata written" >&2; exit 1; }
 ./infra/backups/verify.sh "${DUMP}"
 grep -q '"status": "verified"' "${DUMP%.dump}.verification.json" || { echo "FAIL: healthy dump not marked verified" >&2; exit 1; }
+
+step "Restore rehearsal with restore.sh into the throwaway database"
+# DB_CONTAINER keeps the rehearsal off the compose `db` service: the dump is
+# restored into a second database of the throwaway container only.
+RESTORED_DB="restore_check_$$"
+DB_CONTAINER="${SOURCE}" POSTGRES_USER=dashboard \
+  ./infra/backups/restore.sh "${DUMP}" "${RESTORED_DB}" > /dev/null
+count_in_restored() {
+  docker exec "${SOURCE}" psql -U dashboard -d "${RESTORED_DB}" -tA -c "$1" | tr -d '\r'
+}
+RESTORED_TABLES="$(count_in_restored "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
+RESTORED_MIGRATIONS="$(count_in_restored "SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL")"
+EXPECTED_TABLES="$(sed -n 's/.*"tables": \([0-9]*\).*/\1/p' "${DUMP%.dump}.verification.json")"
+EXPECTED_MIGRATIONS="$(sed -n 's/.*"migrations": \([0-9]*\).*/\1/p' "${DUMP%.dump}.verification.json")"
+[ "${RESTORED_TABLES}" = "${EXPECTED_TABLES}" ] || { echo "FAIL: restore.sh restored ${RESTORED_TABLES} tables, expected ${EXPECTED_TABLES}" >&2; exit 1; }
+[ "${RESTORED_MIGRATIONS}" = "${EXPECTED_MIGRATIONS}" ] || { echo "FAIL: restore.sh restored ${RESTORED_MIGRATIONS} migrations, expected ${EXPECTED_MIGRATIONS}" >&2; exit 1; }
+echo "ok: restore.sh restored ${RESTORED_TABLES} tables and ${RESTORED_MIGRATIONS} migrations"
 
 step "Failure path: truncated archive, original checksum"
 SIZE="$(wc -c < "${DUMP}" | tr -d ' ')"
