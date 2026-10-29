@@ -19,6 +19,7 @@ the pages that consume it.
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
 | `alerts` | Deterministic warning engine: rule configuration, one bounded evaluation pass, episode lifecycle (fingerprint suppression, dismissal). Rules sit next to their data: `budget/alerts.ts`, `integrations/alerts.ts`, `real-estate/alerts.ts`. | `domain.ts`, `lifecycle.ts`, `refresh.ts`, `repository.ts` |
+| `search` | Global search across the owner's own entities and provider snapshots, one bounded and grouped result set per query. | `domain.ts`, `repository.ts` |
 | `dashboard` | Read-only aggregation for the home page. | `queries.ts` |
 
 Cross-cutting code sits in `src/lib` (`db`, `env`, `money`, `dates`, `csv`,
@@ -84,7 +85,28 @@ Convenience paths reuse the write path above; none of them is a second one.
 - **Keyboard**: `n` focuses the label of the page's creation form, `/` the « Libellé
   contient » search. Targets carry `data-shortcut`; keys typed in a field or with
   Ctrl, Cmd or Alt are ignored, and a page without the target ignores the key. The
-  shortcuts only move the focus, they never submit.
+  shortcuts only move the focus, they never submit. When a page has no local search
+  field, `/` falls back to the header's global search (`SHORTCUT_FALLBACKS`).
+
+### Global search (UX-01)
+
+One GET form in the header of every private page, plus its `/search` page: the query is
+read on the server, never in the browser.
+
+- **Scope follows the modules.** `searchableKinds` maps each kind to its module
+  (`budget` → transactions and accounts, `real-estate` → properties, `development` →
+  projects, issues, milestones); a disabled module is not searched at all.
+- **Every read is owner-scoped**: `workspaceId` on the owner's own rows, and
+  `connection: { workspaceId }` on provider snapshots. No provider is contacted per
+  query: results come from the stored snapshots (DR-02).
+- **Bounded, not paginated.** Each kind reads `limit + 1` rows and returns at most the
+  limit, so "more results exist" costs one row rather than a count query per kind. The
+  page states the bound and links to the module (`/budget?all=1&q=…` for a text search).
+- **States stay distinct**: no result, provider not connected, never synchronised, and
+  a failed or stale synchronisation each read differently. A stale snapshot is labelled
+  as such instead of being shown as current.
+- `normalizeSearchQuery` trims and collapses whitespace, requires two characters and
+  truncates a long paste; nothing is read for a shorter query.
 
 ### Deletion
 
@@ -147,6 +169,22 @@ asked for: a cascade here would silently change what a property is worth.
   stored. One owner carries at most one budget per `(category, month, currency)`
   tuple — the unique index that rejects a duplicate also lets the same category hold a
   EUR plan and a USD plan at once. Amounts are never converted between currencies.
+- **Table footers** add one total row per currency, never a cross-currency figure, and
+  aggregate **every non-text column**: the accounts table totals the recorded balance, the
+  low-balance threshold, the pending échéances and the projected balance, and counts the
+  accounts (active/archived) and the date of their latest operation; the goals table totals
+  the « Reste » and the monthly contributions, counts the goals and shows the closest
+  deadline; the budgets table totals the planned amounts and the rolling average; the
+  operations table totals the filtered rows (every filtered row, not only the displayed
+  page); the échéances table totals what still waits for a decision.
+  The goals' « Progression » footer is the group's **weighted accomplishment**,
+  `Σcurrent ÷ Σtarget × 100` (one decimal, half-up — the same rule as a single goal, and
+  never the mean of the row percentages, which would weigh a 5 € goal like a 5 000 € one);
+  a non-positive sum reads 0 %.
+  A footer reads « — » as soon as one of its rows holds an unknown amount (an account with
+  no operation, an automatic threshold, a goal without a source or with a passed deadline,
+  a category without an average): the known rows are still summed, but an unknown is never
+  counted as a zero.
 - **Salary simulation** lives in the budget module and writes nothing by itself: one
   hourly rate per owner, and one `WorkDay` per clicked day whose status is the level
   reached — `PLANNED` feeds the simulated budget, `WORKED` the amount really earned, and a
@@ -372,6 +410,44 @@ asked for: a cascade here would silently change what a property is worth.
   be inventing data. On a past month the figure reads as "what was still to be processed".
   An account with no recorded transaction keeps an **unknown** starting balance: its
   projection stays "—" while the pending net is still told — nothing is made up from it.
+- Expense simulation (budget page, « Simuler une dépense ») — a **read-only** scenario
+  built from the same rows as the Prévisions and Suivi tabs. It writes no transaction
+  and changes no threshold.
+  - The total is the sum of the payments; it is never typed separately. A scenario may
+    split one expense into several dated payments, possibly on different accounts.
+  - A payment may omit its account. The engine then suggests a split: checking, cash
+    and card accounts before other accounts, and savings last; within one family, the
+    largest projected balance first. It tries to preserve the configured low-balance
+    threshold, then keeps balances positive, and only in a last pass accepts going
+    below the floor. Accounts without a recorded operation and archived accounts are
+    never used; an amount no account can receive stays explicitly unallocated.
+  - The window starts at the current month and always covers the current month plus the
+    next six. A past or future payment widens it, three months follow the last payment,
+    and 24 months is the hard bound.
+  - *Balance before scenario* — opening balance + recorded operations + pending
+    forecasts dated in the month. *Balance after scenario* — the same, plus the
+    simulated payments. A confirmed forecast is already a recorded transaction and is
+    never counted twice.
+  - The salary simulation is a **currency-level** forecast: it advances the global
+    balance but no account balance until it is booked.
+  - *Account point low* — the minimum projected balance of an account over the window.
+    *Global point low* — the same for the sum of the currency's accounts.
+  - The floor is resolved per account, in this order: the account's own
+    `lowBalanceThreshold` (Comptes tab), then a positive global `LOW_BALANCE` rule
+    when it applies to the account's currency and is at least the suggestion, then a
+    **suggestion of one month of expenses** — the average of the last three complete
+    months, or the current month's still-pending expenses when they are higher. The
+    analysis labels the source on every account. The suggestion is simulation-only;
+    the alert engine uses the account setting or the global rule, and an account setting
+    remains active even when the global rule is disabled.
+  - A negative balance is flagged even without a positive floor. A breach already
+    present before the scenario is distinguished from one the scenario causes.
+  - An account with no recorded operation keeps an **unknown** balance, never zero.
+    Currencies are never converted; a scenario is single-currency.
+  - With a category selected, the budget impact reuses the Suivi rules (expenses
+    positive, refunds reducing, transfers and uncategorised rows excluded) and, when
+    the rule is enabled, applies the `BUDGET_THRESHOLD` percentage as the preventive
+    alert line. A month without a budget is « no budget », not a zero envelope.
 - Property totals — each cashflow entry counts once. When an entry is linked to
   a transaction, the transaction is the only source of the amount.
 - Property financing (real-estate page, « Financement » card) — the loans of a property,
@@ -405,9 +481,13 @@ asked for: a cascade here would silently change what a property is worth.
     margin is stored per property (`targetGainRate`, 10 % by default, 0–100 %). A
     non-positive net invested capital uses a zero base, so the target is the break-even
     price instead of a lower figure derived from a negative base.
-  - *estimated equity* — estimated value − outstanding debt. *Estimated gain* —
+  - *estimated equity* — the latest append-only valuation − outstanding debt, only
+    when both figures are known in the same currency. With no valuation, an unknown
+    debt, or a currency mismatch it reads **unknown**, never zero. *Estimated gain* —
     estimated equity − net invested capital, before selling costs. A dated entry is
-    required: an amount without its date (or a date without its amount) is refused.
+    required for the legacy single-value form; history rows carry their own valued-on
+    date, amount, explicit currency and optional source note. New rows are append-only
+    so prior valuations remain auditable; currencies are never converted.
   - *gap to target* — target price − estimated value; positive means the target is still
     ahead. The status is one of: sold, no estimate, unknown (a missing input), below
     target, target reached — printed literally, never inferred from a zero.
@@ -519,6 +599,43 @@ asked for: a cascade here would silently change what a property is worth.
     `mergedAt` and no closed history to compute either honestly. Providing them needs
     an additive, bounded fetch of recently closed items (new fields or a table, a
     migration and more provider quota) — a separate ticket, not part of DA-02.
+- Repository health (integrations page, « Santé des dépôts », DA-05) —
+  `buildRepositoryHealth`, pure functions over the stored projects and milestones and a
+  reference instant. Each indicator states its rule on screen and lists the repositories
+  it flags, linked to the provider; there is no global score and nothing implies a
+  write. A repository is **flagged**, **fine** or **not evaluated** (with the reason) for
+  each indicator, and "not evaluated" is never counted as fine:
+  - *Dépôts inactifs* — the activity metrics rule, reused rather than restated
+    (`projectLastActivity`, `DEFAULT_INACTIVE_DAYS` = 30), listed from the shortest to
+    the longest inactivity, so the repositories that just went quiet lead. Every other
+    indicator lists its repositories by name.
+  - *Backlog d'issues* — the provider's open issue counter is at least
+    `DEFAULT_BACKLOG_THRESHOLD` (25). The provider counter is used rather than stored
+    rows because issues are only stored for the bounded selection, and only on GitHub.
+    GitHub's counter includes pull requests, and the text says so. GitLab lists
+    projects with `simple=true`, which carries no counter, so the indicator is not
+    evaluated there. DA-02 defines no issue backlog figure (only pull request counts),
+    so there was none to reuse.
+  - *Jalons en retard* — at least one open milestone past its due date, read exactly as
+    `describeMilestoneDue` reads it (a closed or undated milestone is never late). Only
+    evaluated where milestones are read: GitHub, and repositories inside the bounded
+    selection, computed with the adapter's own `selectRepositoriesToScan` per connection.
+  - *Sans description* / *Sans topics* — the repository has no description, or no topic.
+  - *Métadonnées manquantes* — no default branch, which usually means an empty
+    repository.
+
+  Repositories an indicator cannot judge are grouped by reason (`groupUnavailable`):
+  each reason is stated once, followed by the repositories it concerns, rather than
+  repeated after every one of them.
+
+  **Storage decision:** description and topics were not stored. They are already in
+  the project listing both providers return, so they are kept in the existing
+  `ProjectSnapshot.metrics` JSON as `hasDescription` (boolean) and `topicCount`
+  (number) — no migration, no extra request, and only the *presence* of a description,
+  never its text. A key the payload did not carry is stored as `null`; a snapshot taken
+  before this change has no key at all; both render "not evaluated", and the next
+  synchronisation fills them. GitLab falls back to `tag_list` on instances older than
+  `topics`.
 - Budget charts — two, each answering a question the monthly table cannot. Both reuse
   the aggregation rules above instead of defining their own, so a number in a chart
   always equals the same number in a table:
@@ -536,9 +653,46 @@ asked for: a cascade here would silently change what a property is worth.
     make the bars fail to add up. The
     smallest categories are merged into one "Autres" line once the row budget is
     reached, and the total stays exact.
-  Charts are plain server-rendered markup, with the exact figures printed next to the
-  drawing: no charting dependency, no client-side rendering, and nothing is lost by a
-  reader who cannot use a chart.
+- Prévisions chart — *the month's balance, day after day* (« Prévisions » tab), **three
+  lines** on one axis:
+  - *solde enregistré* — the currency's balance strictly before the month, advanced by each
+    recorded operation;
+  - *échéances du mois* — the month's undecided movements as their own cumulative from zero
+    (their weight so far, not a balance);
+  - *simulé cumulé* — **report simulé** + recorded + échéances, i.e. the simulated balance
+    the six-month schedule shows, accumulated day by day.
+
+  The **report simulé** is what the simulation had already counted and the ledger never
+  received: the previous month's undecided échéances and its simulated (unbooked) salary.
+  Without it the simulated line would restart from the recorded balance every month and
+  silently drop the month before; a decided occurrence or a booked salary is a recorded
+  operation and is therefore never carried a second time. It covers the **immediately
+  preceding month** only — bounded and predictable; chaining further back would need a
+  documented start of the simulation. The **six-month schedule starts from the same
+  carried report**, so the chart's last point and the schedule's row for that month give
+  the same simulated balance (`projection.test.ts` guards the invariant).
+
+  The gap between the recorded line and the simulé cumulé is exactly what waits for a
+  decision, so a projection is never drawn as money. A movement dated outside the month is
+  refused rather than drawn on another day; one point per calendar day, empty days
+  included; the start, the carried report, both month-end figures, the échéances total and
+  the lowest point of the simulé cumulé are printed under the drawing. The legend is
+  interactive: each line can be hidden on its own (hiding two isolates the third), the axis
+  rescales to the lines still shown, and the tooltip lists only those; « Tout afficher »
+  restores all three. Hidden state is per chart and never stored. A currency nothing
+  was ever recorded in has no balance to draw (a currency with in-month operations only
+  starts at zero, like the six-month schedule); a truncated window read hides the chart
+  instead of showing a partial curve. The series is built by `buildDailyBalance`
+  (`modules/budget/evolution.ts`).
+
+The Prévisions chart is the one **client-side** chart: it uses the shadcn/ui chart
+primitives (`components/ui/chart.tsx`) on top of Recharts, with a step line per series,
+tooltips and a legend. The trade-off, accepted deliberately: it adds a client bundle and
+hydration where the rest of the dashboard has none, in exchange for a conventional,
+interactive chart. The numbers it draws are still computed on `Decimal` server-side and
+sent as plain numbers; only formatting happens in the browser, and the exact figures
+remain printed under the drawing. The two other budget charts (trend, category breakdown)
+stay plain server-rendered SVG with no dependency.
 
 An indicator is only displayed once its definition is written down, which is
 what this section is for.
@@ -627,13 +781,18 @@ beside its fields.
   (`budget`, `real-estate`, `development`, `ai-costs`, `agents`, `micro-business`,
   `profitability`, `automation`, `family`). A module is active in a workspace when its
   `WorkspaceModule` row is enabled and all its prerequisites are active
-  (`profitability` needs `budget` and `real-estate`). The module's pages and Server
-  Actions call `requireModule(key)`, which answers 404 otherwise; its exports answer a
-  404 JSON body. The navigation is built by the server layout from the active modules.
-  Disabling only flips `enabled`: records and configuration stay. Enabling writes the
-  activation row only. The migration enables `budget`, `real-estate` and `development`
-  on every existing workspace. The dashboard, the alerts and the account page are not
-  modules: they are not gated yet (dashboard cards: M7-03).
+  (`profitability` needs `budget` and `real-estate`). The module's Server Actions call
+  `requireModule(key)`, which answers 404 otherwise; its exports answer a 404 JSON body.
+  Its pages check `hasModule` and render `ModuleDisabled` instead (a direct link explains
+  the state and reads nothing). The navigation is built by the server layout from the
+  active modules. Disabling only flips `enabled`: records and configuration stay.
+  Enabling writes the activation row only. The migration enables `budget`,
+  `real-estate` and `development` on every existing workspace. The dashboard, the alerts
+  and the account page are not modules, but the dashboard reads and shows only the
+  sections of active modules, and the alert page, banner and export hide the alerts of
+  inactive ones (`ALERT_KIND_MODULES`; the stored episodes are left untouched). The
+  `/modules` page lets an `OWNER` or `ADMIN` enable or disable the modules that have a
+  page, with their prerequisites and what disabling hides.
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.
@@ -907,7 +1066,7 @@ seeded generator is enough, at the cost of no automatic shrinking of a failing c
 
 | Invariant | Test |
 | --- | --- |
-| Owner scoping: every repository function opens with a query scoped to `userId` | `owner-scoping.test.ts` (fake client records the first queries; exemptions listed with their reason) |
+| Owner scoping: every repository function opens with a query scoped to `workspaceId` (M7-04) or `userId` | `owner-scoping.test.ts` (fake client records the first queries; exemptions listed with their reason) |
 | Exact money, month windows that tile the calendar | `money.test.ts` |
 | Cashflow amount XOR linked transaction, counted once | `ledger.test.ts` |
 | Transfers count by sign; the volume is a subset, never extra | `ledger.test.ts` |
@@ -918,6 +1077,31 @@ seeded generator is enough, at the cost of no automatic shrinking of a failing c
 A new repository function must be owner-scoped or be added to `NOT_OWNER_SCOPED` with
 its reason; a new `"use client"` file must be added to `ClientModules` in
 `client-props.ts`. Both omissions fail the suite.
+
+## System diagnostics (SO-03)
+
+`/diagnostics` (linked from the **Compte** page) answers the operational questions
+inside the product, read-only. It calls `requireUser()` first, renders server-side and
+is `force-dynamic`; there is no unauthenticated health endpoint.
+
+`src/modules/diagnostics/run.ts` runs the probes, `checks.ts` turns each observation
+into `ok | warning | error`, a fixed French message and the action to take. A probe
+that fails returns null instead of throwing, so one broken part never hides the others
+and no raw error (which could quote a connection string) reaches the page.
+
+| Check | Source | Never shown |
+| --- | --- | --- |
+| Database | `SELECT 1`, 3 s timeout | the connection string |
+| Migrations | failed rows of `_prisma_migrations`; pending = names in `prisma/migrations` (copied into the image) not applied | — |
+| Encryption key | presence and `decodeEncryptionKey` validity | the key, even partially |
+| Session secret | presence and the `getServerEnv()` length rule | the secret |
+| Providers | status, last synchronisation, stored safe error code, instance host | tokens, URL paths |
+| Last backup | timestamp in the newest `dashboard-*.dump` **file name** under `BACKUP_DIR` (compose mounts `infra/backups` read-only) | dump contents |
+| Version | `package.json`, plus `APP_VERSION` when set (characters `[A-Za-z0-9_.-]` only) | — |
+
+What it cannot see, it says (a warning), rather than reporting a reassuring "ok": a
+migration folder or a backup folder that is not visible from the running app. Backup
+age is not restorability: that verification is SO-04.
 
 ## Not implemented in this base
 

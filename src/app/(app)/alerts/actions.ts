@@ -96,7 +96,7 @@ export async function dismissAlertAction(values: unknown): Promise<ActionResult>
   }
 
   try {
-    const dismissed = await dismissAlert(user.id, parsed.data.id, new Date());
+    const dismissed = await dismissAlert(user.workspace.id, parsed.data.id, new Date());
     if (!dismissed) {
       return rejectedResult(
         "id",
@@ -128,8 +128,8 @@ export async function saveAlertRulesAction(values: unknown): Promise<ActionResul
   }
 
   try {
-    await saveAlertRules(user.id, toRuleConfigs(parsed.data));
-    await refreshAlerts(user.id);
+    await saveAlertRules(user.workspace.id, toRuleConfigs(parsed.data));
+    await refreshAlerts(user.workspace.id);
   } catch (error) {
     return unexpectedResult("saveAlertRules", error);
   }

@@ -83,6 +83,12 @@ import {
 import { resolveTransactionInput } from "@/modules/budget/transactions";
 import { defaultTransferLabels, transferLegEditRefusedReason } from "@/modules/budget/transfers";
 import { findCashflowLinkedToTransaction } from "@/modules/real-estate/repository";
+import { expenseSimulationSchema } from "@/modules/budget/simulation";
+import {
+  serializeSimulationResult,
+  type SerializedSimulationResult,
+} from "@/modules/budget/simulation-contract";
+import { runExpenseSimulation } from "@/modules/budget/simulation-service";
 
 /**
  * Write Server Actions for the budget module.
@@ -103,10 +109,11 @@ export async function createAccountAction(values: unknown): Promise<ActionResult
 
   try {
     await createAccount({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       name: parsed.data.name,
       type: parsed.data.type,
       currency: parsed.data.currency,
+      lowBalanceThreshold: parsed.data.lowBalanceThreshold,
     });
   } catch (error) {
     return unexpectedResult("createAccount", error);
@@ -126,7 +133,7 @@ export async function createCategoryAction(values: unknown): Promise<ActionResul
 
   try {
     await createCategory({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       name: parsed.data.name,
       kind: parsed.data.kind,
     });
@@ -148,14 +155,14 @@ export async function createTransactionAction(values: unknown): Promise<ActionRe
 
   const input = parsed.data;
 
-  const resolved = await resolveTransactionInput(user.id, input);
+  const resolved = await resolveTransactionInput(user.workspace.id, input);
   if (!resolved.ok) {
     return resolved.result;
   }
 
   try {
     await createTransaction({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       accountId: resolved.account.id,
       categoryId: input.categoryId,
       type: input.type,
@@ -177,6 +184,46 @@ export async function createTransactionAction(values: unknown): Promise<ActionRe
   return { status: "ok" };
 }
 
+export type ExpenseSimulationActionResult =
+  | { status: "ok"; simulation: SerializedSimulationResult }
+  | Extract<ActionResult, { status: "invalid" | "error" }>;
+
+/**
+ * A read-only scenario. It goes through the same authorisation and validation as a
+ * write, because a Server Action is a public endpoint, but it never revalidates a
+ * path: no row changed.
+ */
+export async function simulateExpenseAction(
+  values: unknown,
+): Promise<ExpenseSimulationActionResult> {
+  const user = await requireModule("budget");
+  const parsed = expenseSimulationSchema.safeParse(values);
+  if (!parsed.success) {
+    return invalidResult(parsed.error) as ExpenseSimulationActionResult;
+  }
+
+  try {
+    const outcome = await runExpenseSimulation({
+      workspaceId: user.workspace.id,
+      values: parsed.data,
+    });
+
+    if (!outcome.ok) {
+      return rejectedResult(
+        outcome.field,
+        outcome.message,
+      ) as ExpenseSimulationActionResult;
+    }
+
+    return {
+      status: "ok",
+      simulation: serializeSimulationResult(outcome.result),
+    };
+  } catch (error) {
+    return unexpectedResult("simulateExpense", error) as ExpenseSimulationActionResult;
+  }
+}
+
 /**
  * Edits one transaction in place.
  *
@@ -195,7 +242,7 @@ export async function updateTransactionAction(values: unknown): Promise<ActionRe
 
   const input = parsed.data;
 
-  const resolved = await resolveTransactionInput(user.id, input);
+  const resolved = await resolveTransactionInput(user.workspace.id, input);
   if (!resolved.ok) {
     return resolved.result;
   }
@@ -203,7 +250,7 @@ export async function updateTransactionAction(values: unknown): Promise<ActionRe
   try {
     // A leg of a linked transfer is one half of a movement: correcting it alone would
     // let the two halves diverge. The action refuses and names the way out.
-    const existing = await findTransaction(user.id, input.id);
+    const existing = await findTransaction(user.workspace.id, input.id);
     if (!existing) {
       return rejectedResult(
         "id",
@@ -216,7 +263,7 @@ export async function updateTransactionAction(values: unknown): Promise<ActionRe
       return rejectedResult("id", grouped);
     }
 
-    const updated = await updateTransaction(user.id, input.id, {
+    const updated = await updateTransaction(user.workspace.id, input.id, {
       accountId: resolved.account.id,
       categoryId: input.categoryId,
       type: input.type,
@@ -259,7 +306,7 @@ export async function deleteTransactionAction(values: unknown): Promise<ActionRe
     return invalidResult(parsed.error);
   }
 
-  const link = await findCashflowLinkedToTransaction(user.id, parsed.data.id);
+  const link = await findCashflowLinkedToTransaction(user.workspace.id, parsed.data.id);
   if (link) {
     return rejectedResult(
       "id",
@@ -270,7 +317,7 @@ export async function deleteTransactionAction(values: unknown): Promise<ActionRe
   let grouped = false;
 
   try {
-    const outcome = await deleteTransaction(user.id, parsed.data.id);
+    const outcome = await deleteTransaction(user.workspace.id, parsed.data.id);
     if (!outcome.deleted) {
       return rejectedResult("id", "Opération introuvable : elle a peut-être déjà été supprimée.");
     }
@@ -302,16 +349,16 @@ export async function deleteTransactionAction(values: unknown): Promise<ActionRe
  * ordinary duplicate arrives as a readable field error without a database exception.
  */
 async function resolveBudgetInput(
-  userId: string,
+  workspaceId: string,
   input: ValidatedBudgetInput,
   options: { excludeBudgetId?: string } = {},
 ): Promise<{ ok: true; category: CategorySummary } | { ok: false; result: ActionResult }> {
-  const category = await findCategory(userId, input.categoryId);
+  const category = await findCategory(workspaceId, input.categoryId);
   if (!category) {
     return { ok: false, result: rejectedResult("categoryId", "Catégorie introuvable.") };
   }
 
-  const duplicate = await findBudgetByPeriod(userId, {
+  const duplicate = await findBudgetByPeriod(workspaceId, {
     categoryId: category.id,
     year: input.month.year,
     month: input.month.month,
@@ -335,14 +382,14 @@ export async function createBudgetAction(values: unknown): Promise<ActionResult>
 
   const input = parsed.data;
 
-  const resolved = await resolveBudgetInput(user.id, input);
+  const resolved = await resolveBudgetInput(user.workspace.id, input);
   if (!resolved.ok) {
     return resolved.result;
   }
 
   try {
     await createBudget({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       categoryId: resolved.category.id,
       year: input.month.year,
       month: input.month.month,
@@ -372,13 +419,13 @@ export async function updateBudgetAction(values: unknown): Promise<ActionResult>
 
   const input = parsed.data;
 
-  const resolved = await resolveBudgetInput(user.id, input, { excludeBudgetId: input.id });
+  const resolved = await resolveBudgetInput(user.workspace.id, input, { excludeBudgetId: input.id });
   if (!resolved.ok) {
     return resolved.result;
   }
 
   try {
-    const updated = await updateBudget(user.id, input.id, {
+    const updated = await updateBudget(user.workspace.id, input.id, {
       categoryId: resolved.category.id,
       year: input.month.year,
       month: input.month.month,
@@ -414,7 +461,7 @@ export async function deleteBudgetAction(values: unknown): Promise<ActionResult>
   }
 
   try {
-    const deleted = await deleteBudget(user.id, parsed.data.id);
+    const deleted = await deleteBudget(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Budget introuvable : il a peut-être déjà été supprimé.");
     }
@@ -446,12 +493,12 @@ export async function saveSalarySettingAction(values: unknown): Promise<ActionRe
   const { year, month } = parsed.data.month;
 
   try {
-    const rates = await listSalaryRates(user.id);
+    const rates = await listSalaryRates(user.workspace.id);
     const current = resolveSalaryRate(rates, year, month);
 
     if (!current || !current.hourlyRate.equals(parsed.data.hourlyRate)) {
       await upsertSalaryRate({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         year,
         month,
         hourlyRate: parsed.data.hourlyRate,
@@ -459,7 +506,7 @@ export async function saveSalarySettingAction(values: unknown): Promise<ActionRe
     }
 
     await upsertSalarySetting({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       hoursPerDay: parsed.data.hoursPerDay,
       currency: parsed.data.currency,
     });
@@ -492,9 +539,9 @@ export async function cycleWorkDayAction(values: unknown): Promise<ActionResult>
 
   try {
     const [setting, current, rates] = await Promise.all([
-      findSalarySetting(user.id),
-      findWorkDay(user.id, date),
-      listSalaryRates(user.id),
+      findSalarySetting(user.workspace.id),
+      findWorkDay(user.workspace.id, date),
+      listSalaryRates(user.workspace.id),
     ]);
 
     if (!setting) {
@@ -507,7 +554,7 @@ export async function cycleWorkDayAction(values: unknown): Promise<ActionResult>
     const next = nextWorkDayState(current?.status ?? null);
 
     if (next === "REMOVE") {
-      await deleteWorkDay(user.id, date);
+      await deleteWorkDay(user.workspace.id, date);
     } else if (current === null) {
       // Planning a day needs the month's rate: without one, the day could never produce
       // an amount, and the calendar would lead nowhere.
@@ -521,7 +568,7 @@ export async function cycleWorkDayAction(values: unknown): Promise<ActionResult>
       }
 
       await createWorkDay({
-        userId: user.id,
+        workspaceId: user.workspace.id,
         date,
         status: next,
         // The configured day length is copied onto the day: editing the setting later
@@ -529,7 +576,7 @@ export async function cycleWorkDayAction(values: unknown): Promise<ActionResult>
         hours: setting.hoursPerDay,
       });
     } else {
-      await updateWorkDay(user.id, date, { status: next });
+      await updateWorkDay(user.workspace.id, date, { status: next });
     }
   } catch (error) {
     return unexpectedResult("cycleWorkDay", error);
@@ -551,7 +598,7 @@ export async function adjustWorkDayHoursAction(values: unknown): Promise<ActionR
   const { date, direction } = parsed.data;
 
   try {
-    const current = await findWorkDay(user.id, date);
+    const current = await findWorkDay(user.workspace.id, date);
     if (!current) {
       return rejectedResult("date", "Ce jour n'est plus dans le calendrier : rechargez la page.");
     }
@@ -560,7 +607,7 @@ export async function adjustWorkDayHoursAction(values: unknown): Promise<ActionR
     // At a bound the value does not move: no write, but still a success, so a button
     // that has nothing left to do never looks like an error.
     if (!nextHours.equals(current.hours)) {
-      await updateWorkDay(user.id, date, { hours: nextHours });
+      await updateWorkDay(user.workspace.id, date, { hours: nextHours });
     }
   } catch (error) {
     return unexpectedResult("adjustWorkDayHours", error);
@@ -595,9 +642,9 @@ export async function bookSalaryAction(values: unknown): Promise<ActionResult> {
 
   try {
     const [setting, account, rates] = await Promise.all([
-      findSalarySetting(user.id),
-      findAccount(user.id, accountId),
-      listSalaryRates(user.id),
+      findSalarySetting(user.workspace.id),
+      findAccount(user.workspace.id, accountId),
+      listSalaryRates(user.workspace.id),
     ]);
 
     if (!setting) {
@@ -624,13 +671,13 @@ export async function bookSalaryAction(values: unknown): Promise<ActionResult> {
     }
 
     const reference = salaryBookingRef(month.year, month.month);
-    const existing = await findTransactionByExternalRef(user.id, reference);
+    const existing = await findTransactionByExternalRef(user.workspace.id, reference);
     if (existing) {
       return rejectedResult("accountId", DUPLICATE_SALARY_BOOKING_MESSAGE);
     }
 
     const range = monthRange(month.year, month.month);
-    const workDays = await listWorkDays(user.id, { from: range.start, to: range.end });
+    const workDays = await listWorkDays(user.workspace.id, { from: range.start, to: range.end });
     const summary = computeSalarySummary(workDays, rate.hourlyRate);
 
     if (summary.totalAmount.isZero()) {
@@ -641,13 +688,13 @@ export async function bookSalaryAction(values: unknown): Promise<ActionResult> {
     }
 
     const category = await ensureCategory({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       name: SALARY_CATEGORY_NAME,
       kind: "INCOME",
     });
 
     await createTransaction({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       accountId: account.id,
       categoryId: category.id,
       type: "INCOME",
@@ -694,13 +741,13 @@ export async function updateAccountAction(values: unknown): Promise<ActionResult
   const input = parsed.data;
 
   try {
-    const account = await findManagedAccount(user.id, input.id);
+    const account = await findManagedAccount(user.workspace.id, input.id);
     if (!account) {
       return rejectedResult("id", "Compte introuvable : il a peut-être été supprimé entre-temps.");
     }
 
     if (input.currency !== account.currency) {
-      const transactionCount = await countAccountTransactions(user.id, account.id);
+      const transactionCount = await countAccountTransactions(user.workspace.id, account.id);
       if (transactionCount > 0) {
         return rejectedResult(
           "currency",
@@ -709,10 +756,11 @@ export async function updateAccountAction(values: unknown): Promise<ActionResult
       }
     }
 
-    const updated = await updateAccount(user.id, input.id, {
+    const updated = await updateAccount(user.workspace.id, input.id, {
       name: input.name,
       type: input.type,
       currency: input.currency,
+      lowBalanceThreshold: input.lowBalanceThreshold,
     });
 
     if (!updated) {
@@ -746,7 +794,7 @@ export async function setAccountArchivedAction(values: unknown): Promise<ActionR
   }
 
   try {
-    const updated = await setAccountArchived(user.id, parsed.data.id, parsed.data.archived);
+    const updated = await setAccountArchived(user.workspace.id, parsed.data.id, parsed.data.archived);
     if (!updated) {
       return rejectedResult("id", "Compte introuvable : il a peut-être été supprimé entre-temps.");
     }
@@ -782,13 +830,13 @@ export async function updateCategoryAction(values: unknown): Promise<ActionResul
   const input = parsed.data;
 
   try {
-    const category = await findCategory(user.id, input.id);
+    const category = await findCategory(user.workspace.id, input.id);
     if (!category) {
       return rejectedResult("id", "Catégorie introuvable : elle a peut-être été supprimée entre-temps.");
     }
 
     if (input.kind !== category.kind) {
-      const references = await countCategoryReferences(user.id, category.id);
+      const references = await countCategoryReferences(user.workspace.id, category.id);
       const total = references.transactions + references.budgets + references.recurring;
 
       if (total > 0) {
@@ -799,7 +847,7 @@ export async function updateCategoryAction(values: unknown): Promise<ActionResul
       }
     }
 
-    const updated = await updateCategory(user.id, input.id, {
+    const updated = await updateCategory(user.workspace.id, input.id, {
       name: input.name,
       kind: input.kind,
     });
@@ -844,8 +892,8 @@ export async function mergeCategoriesAction(values: unknown): Promise<ActionResu
 
   try {
     const [source, target] = await Promise.all([
-      findCategory(user.id, input.sourceId),
-      findCategory(user.id, input.targetId),
+      findCategory(user.workspace.id, input.sourceId),
+      findCategory(user.workspace.id, input.targetId),
     ]);
 
     if (!source) {
@@ -861,7 +909,7 @@ export async function mergeCategoriesAction(values: unknown): Promise<ActionResu
       );
     }
 
-    const summary = await mergeCategories(user.id, source.id, target.id);
+    const summary = await mergeCategories(user.workspace.id, source.id, target.id);
     if (!summary) {
       return rejectedResult("sourceId", "Catégorie source introuvable : elle a peut-être déjà été fusionnée entre-temps.");
     }
@@ -909,7 +957,7 @@ export async function deleteCategoryAction(values: unknown): Promise<ActionResul
   }
 
   try {
-    const deleted = await deleteCategory(user.id, parsed.data.id);
+    const deleted = await deleteCategory(user.workspace.id, parsed.data.id);
     if (!deleted) {
       return rejectedResult("id", "Catégorie introuvable : elle a peut-être déjà été supprimée.");
     }
@@ -943,8 +991,8 @@ export async function createTransferAction(values: unknown): Promise<ActionResul
 
   try {
     const [from, to] = await Promise.all([
-      findAccount(user.id, input.fromAccountId),
-      findAccount(user.id, input.toAccountId),
+      findAccount(user.workspace.id, input.fromAccountId),
+      findAccount(user.workspace.id, input.toAccountId),
     ]);
 
     if (!from) {
@@ -966,7 +1014,7 @@ export async function createTransferAction(values: unknown): Promise<ActionResul
       : defaultTransferLabels(from.name, to.name);
 
     await createTransferGroup({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       fromAccountId: from.id,
       toAccountId: to.id,
       currency: from.currency,
@@ -1006,7 +1054,7 @@ export async function setTransactionReconciledAction(values: unknown): Promise<A
 
   try {
     const updated = await setTransactionReconciled({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       transactionId: parsed.data.id,
       reconciled: parsed.data.reconciled,
     });
@@ -1044,7 +1092,7 @@ export async function copyBudgetsAction(values: unknown): Promise<ActionResult> 
     const { year: previousYear, month: previousMonth } = parseMonthKey(previousKey);
 
     const { created, skipped } = await copyBudgets({
-      userId: user.id,
+      workspaceId: user.workspace.id,
       from: { year: previousYear, month: previousMonth },
       to: target,
     });

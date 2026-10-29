@@ -45,10 +45,10 @@ function formatHours(value: Decimal): string {
  * month by month, like the operations.
  */
 export async function SalarySection({
-  userId,
+  workspaceId,
   monthKey,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
 }) {
@@ -57,11 +57,11 @@ export async function SalarySection({
   const monthLabel = formatMonthLabel(year, month);
 
   const [setting, rates, workDays, accounts, booking] = await Promise.all([
-    findSalarySetting(userId),
-    listSalaryRates(userId),
-    listWorkDays(userId, { from: range.start, to: range.end }),
-    listAccounts(userId),
-    findTransactionByExternalRef(userId, salaryBookingRef(year, month)),
+    findSalarySetting(workspaceId),
+    listSalaryRates(workspaceId),
+    listWorkDays(workspaceId, { from: range.start, to: range.end }),
+    listAccounts(workspaceId),
+    findTransactionByExternalRef(workspaceId, salaryBookingRef(year, month)),
   ]);
 
   const rate = resolveSalaryRate(rates, year, month);

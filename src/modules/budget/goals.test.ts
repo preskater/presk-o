@@ -1,6 +1,12 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { computeGoalProgress, goalInputSchema, goalUpdateSchema, type GoalRecord } from "./goals";
+import {
+  computeGoalProgress,
+  goalInputSchema,
+  goalUpdateSchema,
+  summariseGoalTotals,
+  type GoalRecord,
+} from "./goals";
 
 /** Fictitious values only. Dates are calendar days at UTC midnight, like the app. */
 
@@ -311,5 +317,100 @@ describe("computeGoalProgress with contributions", () => {
 
     expect(progress.kind).toBe("KNOWN");
     expect(progress.kind === "KNOWN" && progress.current.toFixed(2)).toBe("800.00");
+  });
+});
+
+describe("summariseGoalTotals", () => {
+  function rows(...items: { goal: GoalRecord; progress: ReturnType<typeof computeGoalProgress> }[]) {
+    return items;
+  }
+
+  function known(partial: Partial<GoalRecord>, current: string) {
+    return {
+      goal: goal(partial),
+      progress: computeGoalProgress(goal({ ...partial, currentAmount: new Decimal(current) }), null, {
+        now: NOW,
+      }),
+    };
+  }
+
+  it("returns nothing for an empty list, rather than a zero row", () => {
+    expect(summariseGoalTotals([]).size).toBe(0);
+  });
+
+  it("weights the global percentage by the target amounts, not by the goal count", () => {
+    const totals = summariseGoalTotals(
+      rows(
+        known({ id: "small", name: "Petit", targetAmount: new Decimal("100") }, "100"),
+        known({ id: "big", name: "Grand", targetAmount: new Decimal("900") }, "0"),
+      ),
+    );
+
+    const eur = totals.get("EUR");
+    expect(eur?.goalCount).toBe(2);
+    expect(eur?.target.toFixed(2)).toBe("1000.00");
+    expect(eur?.current.toFixed(2)).toBe("100.00");
+    // 100 / 1000, not the mean of 100 % and 0 %.
+    expect(eur?.percentage?.toFixed(1)).toBe("10.0");
+    expect(eur?.remaining.toFixed(2)).toBe("900.00");
+  });
+
+  it("keeps currencies apart and totals each column of one currency", () => {
+    const totals = summariseGoalTotals(
+      rows(
+        known({ id: "a", targetAmount: new Decimal("500") }, "250"),
+        known({ id: "b", targetAmount: new Decimal("1000"), currency: "USD" }, "1000"),
+      ),
+    );
+
+    expect(totals.size).toBe(2);
+    expect(totals.get("EUR")?.percentage?.toFixed(1)).toBe("50.0");
+    expect(totals.get("USD")?.percentage?.toFixed(1)).toBe("100.0");
+    expect(totals.get("USD")?.remaining.toFixed(2)).toBe("0.00");
+  });
+
+  it("shows no global percentage when one goal's progress is unknown", () => {
+    const totals = summariseGoalTotals(
+      rows(
+        known({ id: "a", targetAmount: new Decimal("1000") }, "400"),
+        {
+          goal: goal({ id: "b", targetAmount: new Decimal("500") }),
+          progress: computeGoalProgress(goal({ id: "b" }), null, { now: NOW }),
+        },
+      ),
+    );
+
+    const eur = totals.get("EUR");
+    expect(eur?.complete).toBe(false);
+    expect(eur?.percentage).toBeNull();
+    expect(eur?.monthlyContribution).toBeNull();
+    // The known row is still summed, and the caller renders "—" for it.
+    expect(eur?.current.toFixed(2)).toBe("400.00");
+  });
+
+  it("counts a reached goal as zero monthly contribution and ignores a passed deadline", () => {
+    const totals = summariseGoalTotals(
+      rows(
+        // Reached: 1 000 / 1 000, nothing left to plan.
+        known({ id: "a", targetAmount: new Decimal("1000") }, "1200"),
+        // Open: 400 remaining over 8 whole months → 50.00 a month.
+        known({ id: "b", targetAmount: new Decimal("400") }, "0"),
+      ),
+    );
+
+    const eur = totals.get("EUR");
+    expect(eur?.monthlyContribution?.toFixed(2)).toBe("50.00");
+    expect(eur?.percentage?.toFixed(1)).toBe("85.7");
+  });
+
+  it("reports the earliest deadline of the group", () => {
+    const totals = summariseGoalTotals(
+      rows(
+        known({ id: "a", targetDate: new Date(Date.UTC(2028, 0, 31)) }, "100"),
+        known({ id: "b", targetDate: new Date(Date.UTC(2027, 2, 15)) }, "100"),
+      ),
+    );
+
+    expect(totals.get("EUR")?.nextDeadline.toISOString().slice(0, 10)).toBe("2027-03-15");
   });
 });

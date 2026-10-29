@@ -48,10 +48,10 @@ function remainingToneClass(tone: BudgetVarianceTone): string {
  * "where did the money go" is the Analyse tab's question, not this one.
  */
 export async function ReportSection({
-  userId,
+  workspaceId,
   monthKey,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
 }) {
@@ -60,10 +60,10 @@ export async function ReportSection({
   const monthLabel = formatMonthLabel(year, month);
 
   const [budgets, series] = await Promise.all([
-    listBudgets(userId, { year, month }),
+    listBudgets(workspaceId, { year, month }),
     // The whole month, capped like the chart window: reaching the cap is reported rather
     // than silently under-reporting the actual.
-    listTransactionsForSeries(userId, { from: range.start, to: range.end }),
+    listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
   ]);
 
   const rows = buildBudgetReport(budgets, series.transactions);

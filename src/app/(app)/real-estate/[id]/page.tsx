@@ -10,7 +10,9 @@ import {
   tdClass,
   thClass,
 } from "@/components/ui";
-import { requireModule } from "@/lib/auth/guard";
+import { requireUser } from "@/lib/auth/guard";
+import { ModuleDisabled } from "@/components/module-disabled";
+import { hasModule } from "@/modules/catalog/catalog";
 import { formatDateOnly, toDateOnlyString } from "@/lib/dates";
 import { formatMoney, type Currency } from "@/lib/money";
 import type Decimal from "decimal.js";
@@ -25,6 +27,7 @@ import type { SaleStatus } from "@/modules/real-estate/valuation";
 import { PropertyForm, type PropertyFormValues } from "../property-form";
 import { SaleForm, type SaleFormValues } from "../sale-form";
 import { RemovePropertyButton } from "../remove-property-button";
+import { ValuationForm } from "../valuation-form";
 
 export const dynamic = "force-dynamic";
 
@@ -77,8 +80,12 @@ export default async function PropertyDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireModule("real-estate");
-  const property = await getPropertyDetail(user.id, id);
+  const user = await requireUser();
+  // A direct link explains the state instead of a 404, and reads nothing of the module.
+  if (!hasModule(user.workspace, "real-estate")) {
+    return <ModuleDisabled moduleKey="real-estate" workspace={user.workspace} />;
+  }
+  const property = await getPropertyDetail(user.workspace.id, id);
 
   if (!property) {
     notFound();
@@ -121,6 +128,7 @@ export default async function PropertyDetailPage({
     salePrice: property.salePrice,
     cashflows: property.cashflows,
     loans: property.loans,
+    valuations: property.valuations,
   });
 
   const removable = {
@@ -231,9 +239,9 @@ export default async function PropertyDetailPage({
               }
             />
             <StatCard
-              label={`Valeur nette estimée (${currency})`}
+              label={`Équité (${currency})`}
               value={formatOptionalMoney(analysis.estimatedEquity, currency)}
-              hint="Valeur estimée − dette restante."
+              hint="Dernière valorisation − dette restante. Inconnue si l'une des deux données manque."
             />
             <StatCard
               label={`Gain estimé à cette valeur (${currency})`}
@@ -361,6 +369,25 @@ export default async function PropertyDetailPage({
         description="Le prix d'acquisition et la valeur estimée nourrissent l'indicateur de cession. Une valeur vide reste « inconnue »."
       >
         <PropertyForm key={property.id} property={formValues} />
+      </Card>
+
+      <Card
+        title="Historique des valorisations"
+        description="Les valorisations sont append-only, datées et conservées pour audit. Une devise différente n'est jamais convertie."
+      >
+        <ValuationForm propertyId={property.id} currency={currency} />
+        {property.valuations.length === 0 ? (
+          <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">Aucune valorisation enregistrée : valeur et équité inconnues.</p>
+        ) : (
+          <ul className="mt-4 space-y-2 text-sm">
+            {property.valuations.map((valuation) => (
+              <li key={valuation.id} className="flex flex-wrap justify-between gap-2 border-b border-zinc-200 pb-2 dark:border-zinc-800">
+                <span>{formatDateOnly(valuation.valuedOn)}{valuation.sourceNote ? ` · ${valuation.sourceNote}` : ""}</span>
+                <span>{formatMoney({ amount: valuation.amount, currency: valuation.currency })}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
 
       <Card

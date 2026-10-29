@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Notice, TableShell, inputClass, tdClass, thClass } from "@/components/ui";
+import type { Currency } from "@/lib/money";
 import {
   categoryKindForTransactionType,
   TRANSACTION_TYPES,
@@ -74,6 +75,7 @@ function draftOf(row: OperationsTableRow): Draft {
 
 export function OperationsTable({
   rows,
+  totals,
   accounts,
   categories,
   listHref,
@@ -82,6 +84,8 @@ export function OperationsTable({
   dir,
 }: {
   rows: OperationsTableRow[];
+  /** Signed total per currency of every filtered row, already formatted on the server. */
+  totals: { currency: Currency; amountLabel: string }[];
   accounts: AccountSummary[];
   categories: CategorySummary[];
   /** The list's own URL (month, filters, sort, page), base of the row links. */
@@ -440,6 +444,21 @@ export function OperationsTable({
           );
         })}
       </tbody>
+      {totals.length > 0 ? (
+        <tfoot>
+          {totals.map(({ currency, amountLabel }) => (
+            <tr key={currency}>
+              <th scope="row" colSpan={5} className={`${tdClass} text-right font-semibold`}>
+                Total ({currency})
+              </th>
+              <td className={`${tdClass} whitespace-nowrap text-right font-semibold tabular-nums`}>
+                {amountLabel}
+              </td>
+              <td colSpan={2} className={tdClass} />
+            </tr>
+          ))}
+        </tfoot>
+      ) : null}
     </TableShell>
   );
 }

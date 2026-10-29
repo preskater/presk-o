@@ -108,7 +108,12 @@ const {
  * Fictitious data only. The action is the only place that decides whether a deletion
  * is allowed, so it is tested against mocked repositories: no test touches a database.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 describe("deleteTransactionAction", () => {
   beforeEach(() => {
@@ -125,7 +130,7 @@ describe("deleteTransactionAction", () => {
 
     expect(result).toEqual({ status: "ok" });
     // The owner is always part of the query: a foreign identifier matches nothing.
-    expect(deleteTransactionMock).toHaveBeenCalledWith(OWNER.id, "tx-1");
+    expect(deleteTransactionMock).toHaveBeenCalledWith(OWNER.workspace.id, "tx-1");
     expect(revalidatePathMock).toHaveBeenCalledWith("/budget");
     expect(revalidatePathMock).toHaveBeenCalledWith("/dashboard");
   });
@@ -239,7 +244,7 @@ describe("createTransactionAction", () => {
     const [input] = createTransactionMock.mock.calls[0] as [Record<string, unknown>];
 
     expect(input).toMatchObject({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       accountId: ACCOUNT.id,
       categoryId: CATEGORY.id,
       type: "EXPENSE",
@@ -309,14 +314,14 @@ describe("updateTransactionAction", () => {
     expect(result).toEqual({ status: "ok" });
     expect(updateTransactionMock).toHaveBeenCalledTimes(1);
 
-    const [userId, transactionId, write] = updateTransactionMock.mock.calls[0] as [
+    const [workspaceId, transactionId, write] = updateTransactionMock.mock.calls[0] as [
       string,
       string,
       Record<string, unknown>,
     ];
 
     // The owner is always part of the query: a foreign identifier matches no row.
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(transactionId).toBe("tx-1");
     expect(write).toMatchObject({
       accountId: ACCOUNT.id,
@@ -436,7 +441,7 @@ describe("createBudgetAction", () => {
     const [input] = createBudgetMock.mock.calls[0] as [Record<string, unknown>];
 
     expect(input).toMatchObject({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       categoryId: BUDGET_CATEGORY.id,
       year: 2026,
       month: 10,
@@ -448,11 +453,11 @@ describe("createBudgetAction", () => {
   });
 
   it("ignores a posted owner instead of trusting it", async () => {
-    await createBudgetAction({ ...VALID_BUDGET, userId: "someone-else" });
+    await createBudgetAction({ ...VALID_BUDGET, workspaceId: "someone-else" });
 
     const [input] = createBudgetMock.mock.calls[0] as [Record<string, unknown>];
 
-    expect(input.userId).toBe(OWNER.id);
+    expect(input.workspaceId).toBe(OWNER.workspace.id);
   });
 
   it("keeps EUR and USD apart: the same month carries one budget per currency", async () => {
@@ -473,7 +478,7 @@ describe("createBudgetAction", () => {
     // The duplicate check asked about each currency separately, not about the month alone.
     expect(findBudgetByPeriodMock).toHaveBeenNthCalledWith(
       2,
-      OWNER.id,
+      OWNER.workspace.id,
       expect.objectContaining({ currency: "USD" }),
     );
   });
@@ -580,14 +585,14 @@ describe("updateBudgetAction", () => {
 
     expect(result).toEqual({ status: "ok" });
 
-    const [userId, budgetId, write] = updateBudgetMock.mock.calls[0] as [
+    const [workspaceId, budgetId, write] = updateBudgetMock.mock.calls[0] as [
       string,
       string,
       Record<string, unknown>,
     ];
 
     // The owner is always part of the query: a foreign identifier matches no row.
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(budgetId).toBe("budget-1");
     expect(write).toMatchObject({
       categoryId: BUDGET_CATEGORY.id,
@@ -678,7 +683,7 @@ describe("deleteBudgetAction", () => {
 
     expect(result).toEqual({ status: "ok" });
     // The owner is always part of the query: a foreign identifier matches nothing.
-    expect(deleteBudgetMock).toHaveBeenCalledWith(OWNER.id, "budget-1");
+    expect(deleteBudgetMock).toHaveBeenCalledWith(OWNER.workspace.id, "budget-1");
     expect(revalidatePathMock).toHaveBeenCalledWith("/budget");
   });
 
@@ -750,7 +755,7 @@ describe("saveSalarySettingAction", () => {
 
     const [rateInput] = upsertSalaryRateMock.mock.calls[0] as [Record<string, unknown>];
 
-    expect(rateInput.userId).toBe(OWNER.id);
+    expect(rateInput.workspaceId).toBe(OWNER.workspace.id);
     expect(rateInput.year).toBe(2026);
     expect(rateInput.month).toBe(10);
     // The typed string became an exact decimal before it reached persistence.
@@ -760,7 +765,7 @@ describe("saveSalarySettingAction", () => {
 
     const [settingInput] = upsertSalarySettingMock.mock.calls[0] as [Record<string, unknown>];
 
-    expect(settingInput.userId).toBe(OWNER.id);
+    expect(settingInput.workspaceId).toBe(OWNER.workspace.id);
     expect(settingInput.currency).toBe("EUR");
     expect((settingInput.hoursPerDay as { toFixed(scale: number): string }).toFixed(2)).toBe(
       "7.50",
@@ -876,7 +881,7 @@ describe("cycleWorkDayAction", () => {
     const [input] = createWorkDayMock.mock.calls[0] as [Record<string, unknown>];
 
     // The owner is always part of the query, and the day length is copied onto the row.
-    expect(input.userId).toBe(OWNER.id);
+    expect(input.workspaceId).toBe(OWNER.workspace.id);
     expect(input.status).toBe("PLANNED");
     expect((input.date as Date).toISOString()).toBe(WORK_DATE.toISOString());
     expect((input.hours as { toFixed(scale: number): string }).toFixed(2)).toBe("7.50");
@@ -893,7 +898,7 @@ describe("cycleWorkDayAction", () => {
     const result = await cycleWorkDayAction({ date: "2026-10-05" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(updateWorkDayMock).toHaveBeenCalledWith(OWNER.id, WORK_DATE, {
+    expect(updateWorkDayMock).toHaveBeenCalledWith(OWNER.workspace.id, WORK_DATE, {
       status: "WORKED",
     });
     // The hours are untouched by a status change.
@@ -911,7 +916,7 @@ describe("cycleWorkDayAction", () => {
     const result = await cycleWorkDayAction({ date: "2026-10-05" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(deleteWorkDayMock).toHaveBeenCalledWith(OWNER.id, WORK_DATE);
+    expect(deleteWorkDayMock).toHaveBeenCalledWith(OWNER.workspace.id, WORK_DATE);
     expect(createWorkDayMock).not.toHaveBeenCalled();
   });
 
@@ -987,13 +992,13 @@ describe("adjustWorkDayHoursAction", () => {
     expect(result).toEqual({ status: "ok" });
     expect(updateWorkDayMock).toHaveBeenCalledTimes(1);
 
-    const [userId, date, write] = updateWorkDayMock.mock.calls[0] as [
+    const [workspaceId, date, write] = updateWorkDayMock.mock.calls[0] as [
       string,
       Date,
       Record<string, unknown>,
     ];
 
-    expect(userId).toBe(OWNER.id);
+    expect(workspaceId).toBe(OWNER.workspace.id);
     expect(date.toISOString()).toBe(WORK_DATE.toISOString());
     expect((write.hours as { toFixed(scale: number): string }).toFixed(2)).toBe("8.00");
     // An hours write must not move the status.
@@ -1095,7 +1100,7 @@ describe("bookSalaryAction", () => {
 
     // The default category is ensured owner-scoped: created if the owner has none.
     expect(ensureCategoryMock).toHaveBeenCalledWith({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       name: "Salaire",
       kind: "INCOME",
     });
@@ -1103,7 +1108,7 @@ describe("bookSalaryAction", () => {
     const [input] = createTransactionMock.mock.calls[0] as [Record<string, unknown>];
 
     expect(input).toMatchObject({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       accountId: EUR_ACCOUNT.id,
       categoryId: SALARY_CATEGORY.id,
       type: "INCOME",
@@ -1197,7 +1202,7 @@ describe("bookSalaryAction", () => {
     expect(result.status).toBe("invalid");
     expect(result.status === "invalid" && result.message).toMatch(/déjà enregistrée/);
     // The reference identifies the booking, not a label the owner may have edited.
-    expect(findTransactionByExternalRefMock).toHaveBeenCalledWith(OWNER.id, "salary:2026-10");
+    expect(findTransactionByExternalRefMock).toHaveBeenCalledWith(OWNER.workspace.id, "salary:2026-10");
     expect(createTransactionMock).not.toHaveBeenCalled();
   });
 
@@ -1269,10 +1274,11 @@ describe("updateAccountAction", () => {
     });
 
     expect(result).toEqual({ status: "ok" });
-    expect(updateAccountMock).toHaveBeenCalledWith(OWNER.id, ACCOUNT_ROW.id, {
+    expect(updateAccountMock).toHaveBeenCalledWith(OWNER.workspace.id, ACCOUNT_ROW.id, {
       name: "Compte principal",
       type: "CHECKING",
       currency: "EUR",
+      lowBalanceThreshold: null,
     });
   });
 
@@ -1330,14 +1336,14 @@ describe("setAccountArchivedAction", () => {
 
     expect(result.status).toBe("ok");
     expect(result.status === "ok" && result.message).toMatch(/archivé/);
-    expect(setAccountArchivedMock).toHaveBeenCalledWith(OWNER.id, "account-1", true);
+    expect(setAccountArchivedMock).toHaveBeenCalledWith(OWNER.workspace.id, "account-1", true);
   });
 
   it("restores the account", async () => {
     const result = await setAccountArchivedAction({ id: "account-1", archived: "false" });
 
     expect(result.status).toBe("ok");
-    expect(setAccountArchivedMock).toHaveBeenCalledWith(OWNER.id, "account-1", false);
+    expect(setAccountArchivedMock).toHaveBeenCalledWith(OWNER.workspace.id, "account-1", false);
   });
 });
 
@@ -1362,7 +1368,7 @@ describe("updateCategoryAction", () => {
     });
 
     expect(result).toEqual({ status: "ok" });
-    expect(updateCategoryMock).toHaveBeenCalledWith(OWNER.id, CATEGORY_ROW.id, {
+    expect(updateCategoryMock).toHaveBeenCalledWith(OWNER.workspace.id, CATEGORY_ROW.id, {
       name: "Alimentation",
       kind: "EXPENSE",
     });
@@ -1441,7 +1447,7 @@ describe("mergeCategoriesAction", () => {
     expect(result.status).toBe("ok");
     expect(result.status === "ok" && result.message).toContain("4 opérations");
     expect(result.status === "ok" && result.message).toMatch(/doublon/);
-    expect(mergeCategoriesMock).toHaveBeenCalledWith(OWNER.id, SOURCE.id, TARGET.id);
+    expect(mergeCategoriesMock).toHaveBeenCalledWith(OWNER.workspace.id, SOURCE.id, TARGET.id);
   });
 
   it("refuses a source equal to the target", async () => {
@@ -1484,7 +1490,7 @@ describe("deleteCategoryAction", () => {
     const result = await deleteCategoryAction({ id: "category-1" });
 
     expect(result).toEqual({ status: "ok" });
-    expect(deleteCategoryMock).toHaveBeenCalledWith(OWNER.id, "category-1");
+    expect(deleteCategoryMock).toHaveBeenCalledWith(OWNER.workspace.id, "category-1");
   });
 
   it("reports an already deleted category", async () => {
@@ -1534,7 +1540,7 @@ describe("createTransferAction", () => {
     expect(result.status).toBe("ok");
     expect(createTransferGroupMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: OWNER.id,
+        workspaceId: OWNER.workspace.id,
         fromAccountId: FROM.id,
         toAccountId: TO.id,
         currency: "EUR",
@@ -1621,7 +1627,7 @@ describe("setTransactionReconciledAction", () => {
 
     expect(result).toEqual({ status: "ok" });
     expect(setTransactionReconciledMock).toHaveBeenCalledWith({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       transactionId: "tx-1",
       reconciled: true,
     });
@@ -1631,7 +1637,7 @@ describe("setTransactionReconciledAction", () => {
     await setTransactionReconciledAction({ id: "tx-1", reconciled: "false" });
 
     expect(setTransactionReconciledMock).toHaveBeenCalledWith({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       transactionId: "tx-1",
       reconciled: false,
     });
@@ -1662,7 +1668,7 @@ describe("copyBudgetsAction", () => {
     expect(result.status === "ok" && result.message).toMatch(/2 déjà présents/);
     // October is the previous month of November: the shift crosses no year here.
     expect(copyBudgetsMock).toHaveBeenCalledWith({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       from: { year: 2026, month: 10 },
       to: { year: 2026, month: 11 },
     });
@@ -1674,7 +1680,7 @@ describe("copyBudgetsAction", () => {
     await copyBudgetsAction({ month: "2027-01" });
 
     expect(copyBudgetsMock).toHaveBeenCalledWith({
-      userId: OWNER.id,
+      workspaceId: OWNER.workspace.id,
       from: { year: 2026, month: 12 },
       to: { year: 2027, month: 1 },
     });

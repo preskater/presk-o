@@ -110,7 +110,8 @@ Working today:
   payment and insurance — with create, edit and delete, kept deliberately apart from
   the operating figures: financing never enters the property totals, and a missing
   balance or rate reads "inconnu", never zero.
-- Property detail page (`/real-estate/{id}`): acquisition price, dated valuation,
+- Property detail page (`/real-estate/{id}`): acquisition price, append-only valuation
+  history and current equity,
   full history (purchase, cashflows, loans, valuation, sale), and a **sale indicator**
   computing the net invested capital, the break-even sale price and the target price
   (break-even + the property's margin). A property can be edited, **sold** (date,
@@ -123,10 +124,24 @@ Working today:
   type, assignee, label, milestone, state, text), an actionable **work queue**
   (unanswered issues, old pull requests, work without a milestone or a label, blocked
   work, milestones due soon or overdue — each item with its age and a link to the
-  provider), milestones with their due dates and progress, and **CI status** (the
-  latest GitHub Actions run of each workflow, most recent first, linked to GitHub; needs
-  `actions:read` on the token). GitLab stays on project metadata, on purpose —
-  pipelines included.
+  provider), milestones with their due dates and progress, bounded **activity
+  metrics** (open pull requests, their median age, inactive repositories, open-milestone
+  completion; open-to-merge time and issue throughput shown as unavailable),
+  **repository health** indicators (inactive, issue backlog, overdue milestones, no
+  description, no topics, no default branch — each with its rule and a link to the
+  provider), and **CI status** (the latest GitHub Actions run of each workflow, most
+  recent first, linked to GitHub; needs `actions:read` on the token). Issue and
+  milestone requests are conditional (`ETag` / `Last-Modified`): an unchanged
+  repository answers 304 and is not rewritten, and the page shows when each was
+  checked versus changed. GitLab stays on project metadata, on purpose — pipelines
+  included.
+- Global search (`/search`, with its field in the header of every page): one bounded
+  query across transactions, accounts, properties, projects, issues and milestones,
+  grouped by type, with the `/` shortcut. Only the modules active in the workspace are
+  searched, every read is owner-scoped, each type is limited to five rows (the page
+  says when more exist and links to the module), and provider results come from the
+  stored snapshots with their state stated — not connected, never synchronised, failed
+  or stale — instead of being presented as current.
 - Dashboard with indicators derived from real data — including the month's budget
   tracking, planned versus actual per currency and kind — distinguishing "no data",
   "not connected" and "synchronisation failed".
@@ -359,7 +374,7 @@ src/
   app/                 # pages, layouts, Route Handlers, Server Actions
   components/          # interface components
   modules/             # business rules, per module
-    identity/ budget/ real-estate/ integrations/ dashboard/
+    identity/ budget/ real-estate/ integrations/ alerts/ catalog/ search/ dashboard/
   lib/                 # database, configuration, cross-cutting utilities
   jobs/                # synchronisation tasks run server-side
   generated/prisma/    # generated client, not committed

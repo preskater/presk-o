@@ -7,4 +7,7 @@ node_modules
 coverage
 infra/backups/*.sql
 infra/backups/*.dump
+infra/backups/*.sha256
+infra/backups/*.json
+infra/backups/*.partial
 *.log

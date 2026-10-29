@@ -58,9 +58,11 @@ export type ClientModules = {
   "src/app/(app)/budget/delete-goal-button.tsx": typeof import("@/app/(app)/budget/delete-goal-button");
   "src/app/(app)/budget/delete-recurring-button.tsx": typeof import("@/app/(app)/budget/delete-recurring-button");
   "src/app/(app)/budget/delete-transaction-button.tsx": typeof import("@/app/(app)/budget/delete-transaction-button");
+  "src/app/(app)/budget/expense-simulation-modal.tsx": typeof import("@/app/(app)/budget/expense-simulation-modal");
   "src/app/(app)/budget/goal-contributions.tsx": typeof import("@/app/(app)/budget/goal-contributions");
   "src/app/(app)/budget/goal-form.tsx": typeof import("@/app/(app)/budget/goal-form");
   "src/app/(app)/budget/import/csv-importer.tsx": typeof import("@/app/(app)/budget/import/csv-importer");
+  "src/app/(app)/budget/month-balance-chart.tsx": typeof import("@/app/(app)/budget/month-balance-chart");
   "src/app/(app)/budget/occurrence-actions.tsx": typeof import("@/app/(app)/budget/occurrence-actions");
   "src/app/(app)/budget/operations-table.tsx": typeof import("@/app/(app)/budget/operations-table");
   "src/app/(app)/budget/recurring-entry-form.tsx": typeof import("@/app/(app)/budget/recurring-entry-form");
@@ -71,15 +73,18 @@ export type ClientModules = {
   "src/app/(app)/budget/transfer-form.tsx": typeof import("@/app/(app)/budget/transfer-form");
   "src/app/(app)/budget/work-calendar.tsx": typeof import("@/app/(app)/budget/work-calendar");
   "src/app/(app)/integrations/issue-filters-form.tsx": typeof import("@/app/(app)/integrations/issue-filters-form");
+  "src/app/(app)/modules/module-toggle.tsx": typeof import("@/app/(app)/modules/module-toggle");
   "src/app/(app)/real-estate/cashflow-form.tsx": typeof import("@/app/(app)/real-estate/cashflow-form");
   "src/app/(app)/real-estate/delete-loan-button.tsx": typeof import("@/app/(app)/real-estate/delete-loan-button");
   "src/app/(app)/real-estate/loan-form.tsx": typeof import("@/app/(app)/real-estate/loan-form");
   "src/app/(app)/real-estate/property-form.tsx": typeof import("@/app/(app)/real-estate/property-form");
   "src/app/(app)/real-estate/remove-property-button.tsx": typeof import("@/app/(app)/real-estate/remove-property-button");
   "src/app/(app)/real-estate/sale-form.tsx": typeof import("@/app/(app)/real-estate/sale-form");
+  "src/app/(app)/real-estate/valuation-form.tsx": typeof import("@/app/(app)/real-estate/valuation-form");
   "src/components/forms.tsx": typeof import("@/components/forms");
   "src/components/keyboard-shortcuts.tsx": typeof import("@/components/keyboard-shortcuts");
   "src/components/main-nav.tsx": typeof import("@/components/main-nav");
+  "src/components/ui/chart.tsx": typeof import("@/components/ui/chart");
 };
 
 type Offenders = {

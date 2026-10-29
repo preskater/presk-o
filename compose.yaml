@@ -67,6 +67,12 @@ services:
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
       NEXT_PUBLIC_DEFAULT_CURRENCY: ${NEXT_PUBLIC_DEFAULT_CURRENCY:-EUR}
       NEXT_PUBLIC_DEFAULT_TIME_ZONE: ${NEXT_PUBLIC_DEFAULT_TIME_ZONE:-Europe/Paris}
+      # Diagnostics (SO-03): where the backup dumps are visible (mounted read-only
+      # below; only their names are read), and an optional build identifier.
+      BACKUP_DIR: /app/backups
+      APP_VERSION: ${APP_VERSION:-}
+    volumes:
+      - ./infra/backups:/app/backups:ro
     # Publish the application on the host interface so it can be reached from
     # outside the container. Set APP_BIND_HOST=127.0.0.1 for local-only access.
     ports:
@@ -128,8 +134,7 @@ services:
 
 volumes:
   db-data:
-    external: true
-    name: dashboard_db-data
+    name: staythecourse_db-data
   proxy-data:
   proxy-config:
 

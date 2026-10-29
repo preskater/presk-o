@@ -43,7 +43,7 @@ export async function GET(request: Request): Promise<Response> {
   const monthKey = isValidMonthKey(monthParam) ? monthParam : currentMonthKey();
   const { year, month } = parseMonthKey(monthKey);
 
-  const budgets = await listBudgets(user.id, { year, month });
+  const budgets = await listBudgets(user.workspace.id, { year, month });
 
   const rows: BudgetRow[] = budgets.map((budget) => ({
     month: monthKey,

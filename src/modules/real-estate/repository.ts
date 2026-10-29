@@ -7,12 +7,18 @@ import {
   type PropertyCashflowDetail,
   type PropertyOccupancy,
   type PropertySummary,
+  type PropertyValuation,
 } from "./domain";
 import type { LoanSummary } from "./loans";
 import type { DueCashflow } from "./alerts";
-import { computeSaleAnalysis, type PropertySaleAnalysis } from "./valuation";
+import {
+  computeEquity,
+  computeSaleAnalysis,
+  latestPropertyValuation,
+  type PropertySaleAnalysis,
+} from "./valuation";
 
-/** Real-estate persistence. Every query is scoped to the owner. */
+/** Real-estate persistence. Every query is scoped to the workspace. */
 
 const PROPERTY_SELECT = {
   id: true,
@@ -29,6 +35,16 @@ const PROPERTY_SELECT = {
   salePrice: true,
   saleCosts: true,
   notes: true,
+  valuations: {
+    select: {
+      id: true,
+      valuedOn: true,
+      amount: true,
+      currency: true,
+      sourceNote: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 const CASHFLOW_SELECT = {
@@ -74,7 +90,17 @@ type PropertyRow = {
   salePrice: DecimalLike | null;
   saleCosts: DecimalLike | null;
   notes: string | null;
+  valuations: ValuationRow[];
   cashflows: CashflowRow[];
+};
+
+type ValuationRow = {
+  id: string;
+  valuedOn: Date;
+  amount: DecimalLike;
+  currency: string;
+  sourceNote: string | null;
+  createdAt: Date;
 };
 
 function toOptionalDecimal(value: DecimalLike | null): Decimal | null {
@@ -99,6 +125,17 @@ function toCashflowDetail(row: CashflowRow): PropertyCashflowDetail {
         }
       : null,
     notes: row.notes,
+    createdAt: row.createdAt,
+  };
+}
+
+function toValuation(row: ValuationRow): PropertyValuation {
+  return {
+    id: row.id,
+    valuedOn: row.valuedOn,
+    amount: new Decimal(row.amount.toString()),
+    currency: assertCurrency(row.currency),
+    sourceNote: row.sourceNote,
     createdAt: row.createdAt,
   };
 }
@@ -137,12 +174,13 @@ function toPropertySummary(
     targetGainRate: new Decimal(row.targetGainRate.toString()),
     salePrice: toOptionalDecimal(row.salePrice),
     saleCosts: toOptionalDecimal(row.saleCosts),
+    valuations: row.valuations.map(toValuation),
   };
 }
 
-export async function listProperties(userId: string): Promise<PropertySummary[]> {
+export async function listProperties(workspaceId: string): Promise<PropertySummary[]> {
   const rows = await getPrisma().property.findMany({
-    where: { userId },
+    where: { workspaceId },
     orderBy: { name: "asc" },
     select: { ...PROPERTY_SELECT, cashflows: { select: CASHFLOW_SELECT } },
   });
@@ -161,11 +199,11 @@ export type PropertyDetail = PropertySummary & {
 
 /** Owner-scoped detail lookup: an identifier from a URL is never trusted. */
 export async function getPropertyDetail(
-  userId: string,
+  workspaceId: string,
   propertyId: string,
 ): Promise<PropertyDetail | null> {
   const row = await getPrisma().property.findFirst({
-    where: { id: propertyId, userId },
+    where: { id: propertyId, workspaceId },
     select: {
       ...PROPERTY_SELECT,
       cashflows: {
@@ -203,11 +241,28 @@ export async function getPropertyDetail(
     loans,
   });
 
-  return { ...summary, cashflows, loans, analysis };
+  const latestValuation = latestPropertyValuation(summary.valuations);
+  const valuationInCurrency =
+    latestValuation?.currency === summary.priceCurrency ? latestValuation : null;
+  const valuationAnalysis = latestValuation
+    ? computeEquity(valuationInCurrency, analysis.outstandingDebt, summary.priceCurrency)
+    : null;
+
+  return {
+    ...summary,
+    cashflows,
+    loans,
+    analysis: {
+      ...analysis,
+      estimatedValue: latestValuation ? valuationInCurrency?.amount ?? null : analysis.estimatedValue,
+      estimatedValueAsOf: latestValuation ? latestValuation.valuedOn : analysis.estimatedValueAsOf,
+      estimatedEquity: latestValuation ? valuationAnalysis : analysis.estimatedEquity,
+    },
+  };
 }
 
-export async function countProperties(userId: string): Promise<number> {
-  return getPrisma().property.count({ where: { userId } });
+export async function countProperties(workspaceId: string): Promise<number> {
+  return getPrisma().property.count({ where: { workspaceId } });
 }
 
 /**
@@ -220,11 +275,11 @@ export async function countProperties(userId: string): Promise<number> {
  * is refused instead, and the caller can name the property to fix.
  */
 export async function findCashflowLinkedToTransaction(
-  userId: string,
+  workspaceId: string,
   transactionId: string,
 ): Promise<{ id: string; propertyName: string } | null> {
   const row = await getPrisma().propertyCashflow.findFirst({
-    where: { transactionId, property: { userId } },
+    where: { transactionId, property: { workspaceId } },
     select: { id: true, property: { select: { name: true } } },
   });
 
@@ -233,11 +288,11 @@ export async function findCashflowLinkedToTransaction(
 
 /** Owner-scoped property lookup: a form identifier is never trusted. */
 export async function findProperty(
-  userId: string,
+  workspaceId: string,
   propertyId: string,
 ): Promise<{ id: string; name: string } | null> {
   const row = await getPrisma().property.findFirst({
-    where: { id: propertyId, userId },
+    where: { id: propertyId, workspaceId },
     select: { id: true, name: true },
   });
 
@@ -277,26 +332,54 @@ function toPropertyData(input: PropertyWriteInput) {
 }
 
 export async function createProperty(
-  input: PropertyWriteInput & { userId: string },
+  input: PropertyWriteInput & { workspaceId: string },
 ): Promise<{ id: string }> {
-  return getPrisma().property.create({
-    data: { userId: input.userId, ...toPropertyData(input) },
-    select: { id: true },
+  return getPrisma().$transaction(async (tx) => {
+    const property = await tx.property.create({
+      data: { workspaceId: input.workspaceId, ...toPropertyData(input) },
+      select: { id: true },
+    });
+
+    if (input.estimatedValue !== null && input.estimatedValueAsOf !== null) {
+      await tx.propertyValuation.create({
+        data: {
+          propertyId: property.id,
+          valuedOn: input.estimatedValueAsOf,
+          amount: input.estimatedValue.toFixed(2),
+          currency: input.currency,
+        },
+      });
+    }
+
+    return property;
   });
 }
 
 /** Updates owner-scoped only: a property from another owner matches nothing. */
 export async function updateProperty(
-  userId: string,
+  workspaceId: string,
   propertyId: string,
   input: PropertyWriteInput,
 ): Promise<boolean> {
-  const { count } = await getPrisma().property.updateMany({
-    where: { id: propertyId, userId },
-    data: toPropertyData(input),
-  });
+  return getPrisma().$transaction(async (tx) => {
+    const { count } = await tx.property.updateMany({
+      where: { id: propertyId, workspaceId },
+      data: toPropertyData(input),
+    });
 
-  return count === 1;
+    if (count === 1 && input.estimatedValue !== null && input.estimatedValueAsOf !== null) {
+      await tx.propertyValuation.create({
+        data: {
+          propertyId,
+          valuedOn: input.estimatedValueAsOf,
+          amount: input.estimatedValue.toFixed(2),
+          currency: input.currency,
+        },
+      });
+    }
+
+    return count === 1;
+  });
 }
 
 /**
@@ -306,11 +389,11 @@ export async function updateProperty(
  * This function is only called when the owner explicitly chooses to erase the record.
  */
 export async function deleteProperty(
-  userId: string,
+  workspaceId: string,
   propertyId: string,
 ): Promise<boolean> {
   const { count } = await getPrisma().property.deleteMany({
-    where: { id: propertyId, userId },
+    where: { id: propertyId, workspaceId },
   });
 
   return count === 1;
@@ -323,12 +406,12 @@ export async function deleteProperty(
  * what lets the detail page show what the sale actually yielded.
  */
 export async function savePropertySale(
-  userId: string,
+  workspaceId: string,
   propertyId: string,
   input: { saleDate: Date; salePrice: Decimal; saleCosts: Decimal },
 ): Promise<boolean> {
   const { count } = await getPrisma().property.updateMany({
-    where: { id: propertyId, userId },
+    where: { id: propertyId, workspaceId },
     data: {
       saleDate: input.saleDate,
       salePrice: input.salePrice.toFixed(2),
@@ -337,6 +420,36 @@ export async function savePropertySale(
   });
 
   return count === 1;
+}
+
+export async function createPropertyValuation(
+  workspaceId: string,
+  input: {
+    propertyId: string;
+    valuedOn: Date;
+    amount: Decimal;
+    currency: Currency;
+    sourceNote: string | null;
+  },
+): Promise<{ id: string } | null> {
+  const property = await getPrisma().property.findFirst({
+    where: { id: input.propertyId, workspaceId },
+    select: { id: true },
+  });
+  if (!property) {
+    return null;
+  }
+
+  return getPrisma().propertyValuation.create({
+    data: {
+      propertyId: property.id,
+      valuedOn: input.valuedOn,
+      amount: input.amount.toFixed(2),
+      currency: input.currency,
+      sourceNote: input.sourceNote,
+    },
+    select: { id: true },
+  });
 }
 
 /**
@@ -376,21 +489,21 @@ export async function createCashflow(input: {
 /**
  * Unsettled cashflows whose due date has arrived, for the overdue alert rule.
  *
- * The owner filter goes through the property (`PropertyCashflow` carries no `userId` of
+ * The owner filter goes through the property (`PropertyCashflow` carries no `workspaceId` of
  * its own), the query is bounded to due dates up to `until`, and the rule re-checks the
  * overdue condition itself — this read only narrows the rows. The amount is resolved
  * here the way totals resolve it (entry amount, else linked transaction), and stays
  * `null` when neither exists: the rule then reports "unknown", never zero.
  */
 export async function listDueCashflows(
-  userId: string,
+  workspaceId: string,
   options: { until?: Date } = {},
 ): Promise<DueCashflow[]> {
   const until = options.until ?? new Date();
 
   const rows = await getPrisma().propertyCashflow.findMany({
     where: {
-      property: { userId },
+      property: { workspaceId },
       settledAt: null,
       dueDate: { not: null, lte: until },
     },
@@ -425,7 +538,7 @@ export async function listDueCashflows(
   }));
 }
 
-/** Real-estate financing. Every query is scoped to the owner through the property. */
+/** Real-estate financing. Every query is scoped to the workspace through the property. */
 
 const LOAN_SELECT = {
   id: true,
@@ -483,9 +596,9 @@ function toLoanSummary(row: LoanRow): LoanSummary {
   };
 }
 
-export async function listLoans(userId: string): Promise<LoanSummary[]> {
+export async function listLoans(workspaceId: string): Promise<LoanSummary[]> {
   const rows = await getPrisma().propertyLoan.findMany({
-    where: { property: { userId } },
+    where: { property: { workspaceId } },
     orderBy: [{ propertyId: "asc" }, { label: "asc" }],
     select: LOAN_SELECT,
   });
@@ -495,11 +608,11 @@ export async function listLoans(userId: string): Promise<LoanSummary[]> {
 
 /** Owner-scoped loan lookup: a form identifier is never trusted. */
 export async function findLoan(
-  userId: string,
+  workspaceId: string,
   loanId: string,
 ): Promise<LoanSummary | null> {
   const row = await getPrisma().propertyLoan.findFirst({
-    where: { id: loanId, property: { userId } },
+    where: { id: loanId, property: { workspaceId } },
     select: LOAN_SELECT,
   });
 
@@ -554,21 +667,21 @@ export async function createLoan(
 
 /** Updates owner-scoped only: a loan from another owner matches nothing. */
 export async function updateLoan(
-  userId: string,
+  workspaceId: string,
   loanId: string,
   input: LoanWriteInput,
 ): Promise<boolean> {
   const { count } = await getPrisma().propertyLoan.updateMany({
-    where: { id: loanId, property: { userId } },
+    where: { id: loanId, property: { workspaceId } },
     data: { propertyId: input.propertyId, ...toLoanData(input) },
   });
 
   return count === 1;
 }
 
-export async function deleteLoan(userId: string, loanId: string): Promise<boolean> {
+export async function deleteLoan(workspaceId: string, loanId: string): Promise<boolean> {
   const { count } = await getPrisma().propertyLoan.deleteMany({
-    where: { id: loanId, property: { userId } },
+    where: { id: loanId, property: { workspaceId } },
   });
 
   return count === 1;

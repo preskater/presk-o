@@ -17,6 +17,7 @@ import {
   listTransactionsForSeries,
 } from "@/modules/budget/repository";
 import { AVERAGE_WINDOW_MONTHS, computeCategoryAverages } from "@/modules/budget/averages";
+import { sumPerCurrency } from "@/modules/budget/table-totals";
 import { BudgetForm } from "./budget-form";
 import { CopyBudgetsButton } from "./copy-budgets-button";
 import { DeleteBudgetButton } from "./delete-budget-button";
@@ -33,13 +34,13 @@ const CATEGORY_KIND_LABELS: Record<CategoryKind, string> = {
  * belongs to this tab because budgets are consulted month by month, like the operations.
  */
 export async function BudgetsSection({
-  userId,
+  workspaceId,
   monthKey,
   editBudgetId,
   newBudgetCategory,
   newBudgetCurrency,
 }: {
-  userId: string;
+  workspaceId: string;
   /** `YYYY-MM`, the month shared by every tab. */
   monthKey: string;
   /** `?editBudget=`, an identifier to look up: a foreign one finds nothing. */
@@ -63,11 +64,11 @@ export async function BudgetsSection({
   const averageEnd = monthRange(year, month).start;
 
   const [categories, budgets, editBudgetTarget, averageRead] = await Promise.all([
-    listCategories(userId),
+    listCategories(workspaceId),
     // The budgets of the displayed month: the section never mixes months or currencies.
-    listBudgets(userId, { year, month }),
-    editBudgetId ? findBudget(userId, editBudgetId) : Promise.resolve(null),
-    listTransactionsForSeries(userId, { from: averageStart.start, to: averageEnd }),
+    listBudgets(workspaceId, { year, month }),
+    editBudgetId ? findBudget(workspaceId, editBudgetId) : Promise.resolve(null),
+    listTransactionsForSeries(workspaceId, { from: averageStart.start, to: averageEnd }),
   ]);
 
   const averages = averageRead.truncated
@@ -78,6 +79,19 @@ export async function BudgetsSection({
   const averageByCategoryCurrency = new Map(
     averages.map((average) => [`${average.categoryId}|${average.currency}`, average]),
   );
+
+  // Footer of the average column: a category with no recent average contributes nothing
+  // and marks its currency incomplete, so the row shows "—" (see `sumPerCurrency`).
+  const budgetAmountTotals = sumPerCurrency(budgets, (budget) => ({
+    currency: budget.currency,
+    amount: budget.amount,
+  }));
+  const budgetAverageTotals = sumPerCurrency(budgets, (budget) => ({
+    currency: budget.currency,
+    amount:
+      averageByCategoryCurrency.get(`${budget.categoryId}|${budget.currency}`)?.monthlyAverage ??
+      null,
+  }));
 
   // A suggestion is a category with a recent average and no budget yet for that month and
   // currency: the list offers to open the form with the average already in it.
@@ -284,6 +298,36 @@ export async function BudgetsSection({
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              {[...budgetAmountTotals.values()].map(({ currency, amount }) => {
+                const average = budgetAverageTotals.get(currency);
+
+                return (
+                  <tr key={currency}>
+                    <th
+                      scope="row"
+                      colSpan={3}
+                      className={`${tdClass} text-right font-semibold`}
+                    >
+                      Total ({currency})
+                    </th>
+                    <td className={`${tdClass} whitespace-nowrap text-right font-semibold tabular-nums`}>
+                      {formatMoney({ amount, currency })}
+                    </td>
+                    <td className={`${tdClass} whitespace-nowrap text-right font-semibold tabular-nums`}>
+                      {average?.complete ? (
+                        formatMoney({ amount: average.amount, currency })
+                      ) : (
+                        <span title="Au moins une catégorie n'a pas de moyenne : le total serait incomplet.">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className={tdClass} />
+                  </tr>
+                );
+              })}
+            </tfoot>
           </TableShell>
         )}
       </div>

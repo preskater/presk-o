@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
  * Invariant 1 — owner scoping.
  *
  * Every repository function that reaches the database must open with a query scoped to
- * the owner: `userId` in its `where` (or in the `data` it creates), directly or through
- * a relation (`account: { userId }`). An identifier sent by a browser is then simply
+ * the owner: `workspaceId` (M7-04) or `userId` in its `where` (or in the `data` it
+ * creates), directly or through a relation (`account: { userId }`). An identifier sent by a browser is then simply
  * not found for anyone else. Writes keyed by a row id are fine *after* such a check,
  * which is why only the first wave of queries is examined: the fake client records the
  * queries a function issues, then stops it.
@@ -52,11 +52,14 @@ vi.mock("@/lib/env", async (importOriginal) => ({
   getServerEnv: () => ({ INTEGRATION_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64") }),
 }));
 
-/** True when `userId: OWNER` appears anywhere in the value. */
+/** Keys that scope a row: the owner, or since M7-04 the workspace the guard resolved. */
+const SCOPE_KEYS = new Set(["userId", "workspaceId"]);
+
+/** True when `userId: OWNER` or `workspaceId: OWNER` appears anywhere in the value. */
 function mentionsOwner(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
   return Object.entries(value).some(
-    ([key, item]) => (key === "userId" && item === OWNER) || mentionsOwner(item),
+    ([key, item]) => (SCOPE_KEYS.has(key) && item === OWNER) || mentionsOwner(item),
   );
 }
 
@@ -105,7 +108,7 @@ const NOT_OWNER_SCOPED: Record<string, string> = {
 function argumentsFor(name: string, fn: (...args: unknown[]) => unknown): unknown[] {
   const date = new Date("2026-01-15T00:00:00.000Z");
   const input = new Proxy(
-    { userId: OWNER },
+    { userId: OWNER, workspaceId: OWNER },
     {
       get: (target, key) => {
         if (key in target) return target[key as keyof typeof target];

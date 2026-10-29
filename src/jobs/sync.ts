@@ -92,11 +92,11 @@ export type SyncDependencies = {
 };
 
 export async function synchroniseConnection(
-  userId: string,
+  workspaceId: string,
   connectionId: string,
   dependencies: SyncDependencies = {},
 ): Promise<SyncRunResult> {
-  const connection = await findConnectionForSync(userId, connectionId);
+  const connection = await findConnectionForSync(workspaceId, connectionId);
 
   if (!connection) {
     return {
@@ -323,14 +323,14 @@ function readInFull(checks: readonly ResourceCheck[]): string[] {
 
 /** One run for every connection of the owner; one failure never blocks the others. */
 export async function synchroniseAllConnections(
-  userId: string,
+  workspaceId: string,
   dependencies: SyncDependencies = {},
 ): Promise<SyncRunResult[]> {
-  const connections = await listConnections(userId);
+  const connections = await listConnections(workspaceId);
   const results: SyncRunResult[] = [];
 
   for (const connection of connections) {
-    results.push(await synchroniseConnection(userId, connection.id, dependencies));
+    results.push(await synchroniseConnection(workspaceId, connection.id, dependencies));
   }
 
   return results;

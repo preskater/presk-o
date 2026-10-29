@@ -9,7 +9,7 @@ import {
 import { buildBudgetReport } from "@/modules/budget/report";
 import {
   listAccountBalanceTotals,
-  listAccounts,
+  listAccountsForManagement,
   listBudgets,
   listTransactionsForSeries,
 } from "@/modules/budget/repository";
@@ -46,7 +46,7 @@ export type AlertRefreshSummary = {
 };
 
 export async function refreshAlerts(
-  userId: string,
+  workspaceId: string,
   options: { now?: Date } = {},
 ): Promise<AlertRefreshSummary> {
   const now = options.now ?? new Date();
@@ -56,14 +56,14 @@ export async function refreshAlerts(
 
   const [ruleRows, accounts, balanceTotals, budgets, monthSeries, connections, dueCashflows, existing] =
     await Promise.all([
-      listAlertRules(userId),
-      listAccounts(userId),
-      listAccountBalanceTotals(userId),
-      listBudgets(userId, { year, month }),
-      listTransactionsForSeries(userId, { from: range.start, to: range.end }),
-      listConnections(userId),
-      listDueCashflows(userId, { until: now }),
-      listAlerts(userId),
+      listAlertRules(workspaceId),
+      listAccountsForManagement(workspaceId),
+      listAccountBalanceTotals(workspaceId),
+      listBudgets(workspaceId, { year, month }),
+      listTransactionsForSeries(workspaceId, { from: range.start, to: range.end }),
+      listConnections(workspaceId),
+      listDueCashflows(workspaceId, { until: now }),
+      listAlerts(workspaceId),
     ]);
 
   const rules = resolveAlertRules(ruleRows);
@@ -72,13 +72,16 @@ export async function refreshAlerts(
   // An account absent from the grouped read has nothing recorded: its balance stays
   // unknown (count 0) and the low-balance rule leaves it alone.
   const byAccount = new Map(balanceTotals.map((total) => [total.accountId, total]));
-  const accountBalances = accounts.map((account) => ({
-    accountId: account.id,
-    accountName: account.name,
-    currency: account.currency,
-    transactionCount: byAccount.get(account.id)?.transactionCount ?? 0,
-    balance: byAccount.get(account.id)?.balance ?? new Decimal(0),
-  }));
+  const accountBalances = accounts
+    .filter((account) => account.archivedAt === null)
+    .map((account) => ({
+      accountId: account.id,
+      accountName: account.name,
+      currency: account.currency,
+      transactionCount: byAccount.get(account.id)?.transactionCount ?? 0,
+      balance: byAccount.get(account.id)?.balance ?? new Decimal(0),
+      lowBalanceThreshold: account.lowBalanceThreshold,
+    }));
 
   // One report for both budget rules, so overrun and threshold can never disagree.
   const reportRows = buildBudgetReport(budgets, monthSeries.transactions);
@@ -104,7 +107,7 @@ export async function refreshAlerts(
     candidates,
   );
 
-  await applyAlertPlan(userId, plan, now);
+  await applyAlertPlan(workspaceId, plan, now);
 
   const statusById = new Map(existing.map((alert) => [alert.id, alert.status]));
   const resolvedActive = plan.resolves.filter((id) => statusById.get(id) === "ACTIVE").length;

@@ -13,6 +13,7 @@ import {
   formatMoney,
   type Currency,
 } from "@/lib/money";
+import type { ModuleKey } from "@/modules/catalog/catalog";
 
 /**
  * Alert engine — shared contract (BP-05).
@@ -42,6 +43,23 @@ export const ALERT_KINDS = [
   "OVERDUE_EVENT",
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
+
+/**
+ * The module whose data each rule reads. An alert of an inactive module is not shown nor
+ * exported: its stored episode stays as it is and reappears once the module is back.
+ */
+export const ALERT_KIND_MODULES: Record<AlertKind, ModuleKey> = {
+  LOW_BALANCE: "budget",
+  BUDGET_OVERRUN: "budget",
+  BUDGET_THRESHOLD: "budget",
+  UNUSUAL_EXPENSE: "budget",
+  STALE_INTEGRATION: "development",
+  OVERDUE_EVENT: "real-estate",
+};
+
+export function isAlertVisible(kind: AlertKind, modules: readonly ModuleKey[]): boolean {
+  return modules.includes(ALERT_KIND_MODULES[kind]);
+}
 
 export const ALERT_KIND_LABELS: Record<AlertKind, string> = {
   LOW_BALANCE: "Solde bas",
@@ -414,7 +432,7 @@ export type AlertRuleConfig = {
  */
 export const ALERT_RULE_DESCRIPTIONS: Record<AlertKind, string> = {
   LOW_BALANCE:
-    "Déclenche quand le solde enregistré d'un compte passe sous le seuil. Un compte sans aucune opération n'est pas « à zéro » : il n'est pas évalué. Un seuil de zéro vaut pour toutes les devises ; un seuil supérieur ne compare que les comptes dans sa devise (aucune conversion n'est faite).",
+    "Déclenche quand le solde enregistré d'un compte passe sous son seuil. Un seuil défini sur le compte (onglet Comptes) est prioritaire et reste actif même si cette règle globale est désactivée ; à défaut, cette règle globale s'applique. Un compte sans aucune opération n'est pas « à zéro » : il n'est pas évalué. Un seuil global de zéro vaut pour toutes les devises ; un seuil supérieur ne compare que les comptes dans sa devise (aucune conversion n'est faite).",
   BUDGET_OVERRUN:
     "Déclenche quand le réalisé d'un budget de dépense dépasse le montant planifié du mois (règle du Suivi : remboursements déduits, opérations du mois uniquement). La marge est le pourcentage de dépassement à partir duquel l'alerte apparaît.",
   BUDGET_THRESHOLD:

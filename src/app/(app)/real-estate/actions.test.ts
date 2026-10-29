@@ -45,7 +45,12 @@ const {
  * Fictitious data only. Authorisation and ownership are decided in the action, so it
  * is exercised against mocked repositories: no test touches a database.
  */
-const OWNER = { id: "owner-1", email: "owner@example.test", name: null };
+const OWNER = {
+  id: "owner-1",
+  email: "owner@example.test",
+  name: null,
+  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+};
 
 const validLoan = {
   propertyId: "property-1",
@@ -75,7 +80,7 @@ describe("createLoanAction", () => {
     const result = await createLoanAction(validLoan);
 
     expect(result.status).toBe("ok");
-    expect(findPropertyMock).toHaveBeenCalledWith("owner-1", "property-1");
+    expect(findPropertyMock).toHaveBeenCalledWith("ws-owner-1", "property-1");
     expect(createLoanMock).toHaveBeenCalledTimes(1);
     const input = createLoanMock.mock.calls[0][0] as { initialPrincipal: Decimal };
     expect(input.initialPrincipal.toFixed(2)).toBe("250000.00");
@@ -115,7 +120,7 @@ describe("updateLoanAction", () => {
 
     expect(result.status).toBe("ok");
     expect(updateLoanMock).toHaveBeenCalledTimes(1);
-    expect(updateLoanMock.mock.calls[0][0]).toBe("owner-1");
+    expect(updateLoanMock.mock.calls[0][0]).toBe("ws-owner-1");
     expect(updateLoanMock.mock.calls[0][1]).toBe("loan-1");
   });
 
@@ -140,7 +145,7 @@ describe("deleteLoanAction", () => {
     const result = await deleteLoanAction({ id: "loan-1" });
 
     expect(result.status).toBe("ok");
-    expect(deleteLoanMock).toHaveBeenCalledWith("owner-1", "loan-1");
+    expect(deleteLoanMock).toHaveBeenCalledWith("ws-owner-1", "loan-1");
   });
 
   it("refuses an unknown loan and reports it", async () => {
@@ -180,7 +185,7 @@ describe("updatePropertyAction", () => {
 
     expect(result.status).toBe("ok");
     expect(updatePropertyMock).toHaveBeenCalledTimes(1);
-    expect(updatePropertyMock.mock.calls[0][0]).toBe("owner-1");
+    expect(updatePropertyMock.mock.calls[0][0]).toBe("ws-owner-1");
     expect(updatePropertyMock.mock.calls[0][1]).toBe("property-1");
     const input = updatePropertyMock.mock.calls[0][2] as { purchasePrice: Decimal };
     expect(input.purchasePrice.toFixed(2)).toBe("200000.00");
@@ -219,7 +224,7 @@ describe("deletePropertyAction", () => {
     const result = await deletePropertyAction({ id: "property-1" });
 
     expect(result.status).toBe("ok");
-    expect(deletePropertyMock).toHaveBeenCalledWith("owner-1", "property-1");
+    expect(deletePropertyMock).toHaveBeenCalledWith("ws-owner-1", "property-1");
     expect(result.status === "ok" && result.message).toMatch(/flux/i);
   });
 

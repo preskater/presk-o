@@ -31,25 +31,30 @@ export type AccountBalance = {
   /** How many transactions the account holds; zero means the balance is unknown. */
   transactionCount: number;
   balance: Decimal;
+  /** Per-account floor, in the account currency; null falls back to the global rule. */
+  lowBalanceThreshold: Decimal | null;
 };
 
 /**
  * Low balance: the recorded balance of an account sits below the configured floor.
  *
  * An account with no recorded transaction is **not** at zero — its balance is unknown —
- * so it is left out. A threshold of zero applies to every currency (zero means the same
- * everywhere) and flags overdrawn accounts; a positive threshold only compares accounts
- * in its own currency, because the app never converts.
+ * so it is left out. A per-account threshold wins; otherwise a threshold of zero applies
+ * to every currency and flags overdrawn accounts, while a positive global threshold only
+ * compares accounts in its own currency, because the app never converts.
  */
 export function evaluateLowBalance(
   accounts: readonly AccountBalance[],
   rule: AlertRuleConfig,
 ): AlertCandidate[] {
-  if (!rule.enabled) {
+  const hasAccountThreshold = accounts.some(
+    (account) => account.lowBalanceThreshold !== null,
+  );
+  if (!rule.enabled && !hasAccountThreshold) {
     return [];
   }
 
-  const threshold = rule.thresholdAmount ?? new Decimal(0);
+  const globalThreshold = rule.thresholdAmount ?? new Decimal(0);
   const candidates: AlertCandidate[] = [];
 
   for (const account of accounts) {
@@ -57,11 +62,15 @@ export function evaluateLowBalance(
       continue;
     }
 
-    if (
-      threshold.greaterThan(0) &&
-      rule.thresholdCurrency !== null &&
-      account.currency !== rule.thresholdCurrency
-    ) {
+    const threshold = account.lowBalanceThreshold ?? globalThreshold;
+    const applies =
+      account.lowBalanceThreshold !== null ||
+      (rule.enabled &&
+        (globalThreshold.isZero() ||
+          rule.thresholdCurrency === null ||
+          account.currency === rule.thresholdCurrency));
+
+    if (!applies) {
       continue;
     }
 
