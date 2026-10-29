@@ -775,8 +775,15 @@ beside its fields.
   with the role held there) from the user's own memberships, server-side only. A user
   without any membership is refused like a signed-out one, and a workspace id the user
   is not a member of reads as "not found". The migration gives each existing user a
-  personal workspace (`ws-<userId>`) as `OWNER`; records stay owned by `userId` until
-  the scoping migration (M7-04).
+  personal workspace (`ws-<userId>`) as `OWNER`.
+- Record scoping (M7-04): budget, real-estate, integration and alert records carry a
+  `workspaceId`, and every repository function takes the active workspace's id
+  (`user.workspace.id`) and filters on it — exports included. A foreign workspace's row
+  reads as "not found". Unique constraints carry the workspace dimension (for example
+  the alert `fingerprint` and the budget (category, year, month, currency) tuple).
+  Child rows (loans, cashflows, snapshots, cache entries, sync runs) are scoped through
+  their property or connection. See [workspace-scoping.md](workspace-scoping.md) for the
+  migration and its rollback.
 - Modules: the keys of `src/modules/catalog/catalog.ts` are the only ones accepted
   (`budget`, `real-estate`, `development`, `ai-costs`, `agents`, `micro-business`,
   `profitability`, `automation`, `family`). A module is active in a workspace when its
