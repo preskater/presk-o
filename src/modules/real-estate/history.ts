@@ -5,6 +5,7 @@ import {
   type PropertyCashflowDetail,
 } from "./domain";
 import type { LoanSummary } from "./loans";
+import type { PropertyValuation } from "./domain";
 
 /**
  * Property history.
@@ -51,6 +52,7 @@ export function buildPropertyHistory(input: {
   salePrice: Decimal | null;
   cashflows: readonly PropertyCashflowDetail[];
   loans: readonly LoanSummary[];
+  valuations?: readonly PropertyValuation[];
 }): PropertyHistoryEvent[] {
   const events: PropertyHistoryEvent[] = [];
   const currency = input.currency;
@@ -68,7 +70,8 @@ export function buildPropertyHistory(input: {
     });
   }
 
-  if (input.estimatedValueAsOf && input.estimatedValue) {
+  const valuations = input.valuations ?? [];
+  if (valuations.length === 0 && input.estimatedValueAsOf && input.estimatedValue) {
     events.push({
       id: "valuation",
       date: input.estimatedValueAsOf,
@@ -77,6 +80,19 @@ export function buildPropertyHistory(input: {
       detail: null,
       amount: input.estimatedValue,
       currency,
+      direction: "NONE",
+    });
+  }
+
+  for (const valuation of valuations) {
+    events.push({
+      id: `valuation-${valuation.id}`,
+      date: valuation.valuedOn,
+      kind: "VALUATION",
+      title: "Valeur estimée",
+      detail: valuation.sourceNote,
+      amount: valuation.amount,
+      currency: valuation.currency,
       direction: "NONE",
     });
   }

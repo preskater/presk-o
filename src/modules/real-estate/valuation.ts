@@ -2,6 +2,35 @@ import Decimal from "decimal.js";
 import type { Currency } from "@/lib/money";
 import type { PropertyTotals } from "./domain";
 import type { LoanSummary } from "./loans";
+import type { PropertyValuation } from "./domain";
+
+export function latestPropertyValuation(
+  valuations: readonly PropertyValuation[],
+): PropertyValuation | null {
+  return valuations.reduce<PropertyValuation | null>((latest, valuation) => {
+    if (
+      latest === null ||
+      valuation.valuedOn.getTime() > latest.valuedOn.getTime() ||
+      (valuation.valuedOn.getTime() === latest.valuedOn.getTime() &&
+        valuation.createdAt.getTime() > latest.createdAt.getTime())
+    ) {
+      return valuation;
+    }
+    return latest;
+  }, null);
+}
+
+/** Equity is unknown unless the latest valuation and debt are known in one currency. */
+export function computeEquity(
+  valuation: Pick<PropertyValuation, "amount" | "currency"> | null,
+  debt: Decimal | null,
+  currency: Currency,
+): Decimal | null {
+  if (valuation === null || debt === null || valuation.currency !== currency) {
+    return null;
+  }
+  return valuation.amount.minus(debt);
+}
 
 /**
  * Property valuation and sale analysis (RE-02).

@@ -13,6 +13,7 @@ const findManyMock = vi.fn();
 const updateManyMock = vi.fn();
 const deleteManyMock = vi.fn();
 const createMock = vi.fn();
+const createValuationMock = vi.fn();
 const table = {
   findFirst: findFirstMock,
   findMany: findManyMock,
@@ -21,16 +22,19 @@ const table = {
   create: createMock,
 };
 
-vi.mock("@/lib/db", () => ({
-  getPrisma: () => ({
-    account: table,
-    property: table,
-    propertyLoan: table,
-    alert: table,
-    integrationConnection: table,
-    issueSnapshot: table,
-  }),
-}));
+const prisma = {
+  account: table,
+  property: table,
+  propertyLoan: table,
+  propertyValuation: { create: createValuationMock },
+  alert: table,
+  integrationConnection: table,
+  issueSnapshot: table,
+  // Interactive transactions hand the same fake client back to the callback.
+  $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(prisma)),
+};
+
+vi.mock("@/lib/db", () => ({ getPrisma: () => prisma }));
 
 const { createAccount, findAccount } = await import("./budget/repository");
 const { deleteLoan, findProperty, updateProperty } = await import("./real-estate/repository");
@@ -45,6 +49,7 @@ beforeEach(() => {
   updateManyMock.mockReset().mockResolvedValue({ count: 0 });
   deleteManyMock.mockReset().mockResolvedValue({ count: 0 });
   createMock.mockReset().mockResolvedValue({ id: "account-1" });
+  createValuationMock.mockReset().mockResolvedValue({ id: "valuation-1" });
 });
 
 function where(mock: ReturnType<typeof vi.fn>) {
@@ -84,14 +89,16 @@ describe("real-estate", () => {
       currency: "EUR",
       purchaseDate: null,
       purchasePrice: null,
-      estimatedValue: null,
-      estimatedValueAsOf: null,
+      estimatedValue: new Decimal("250000.00"),
+      estimatedValueAsOf: new Date("2026-01-01T00:00:00.000Z"),
       targetGainRate: new Decimal(10),
       notes: null,
     } as const;
 
     expect(await updateProperty(FOREIGN, "property-1", write)).toBe(false);
     expect(where(updateManyMock)).toEqual({ id: "property-1", workspaceId: FOREIGN });
+    // A rejected update must not leave a valuation behind either.
+    expect(createValuationMock).not.toHaveBeenCalled();
 
     expect(await deleteLoan(FOREIGN, "loan-1")).toBe(false);
     // A loan has no workspace column: the filter goes through its property.

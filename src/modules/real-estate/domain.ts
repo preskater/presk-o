@@ -89,6 +89,16 @@ export type PropertySummary = {
   targetGainRate: Decimal;
   salePrice: Decimal | null;
   saleCosts: Decimal | null;
+  valuations: PropertyValuation[];
+};
+
+export type PropertyValuation = {
+  id: string;
+  valuedOn: Date;
+  amount: Decimal;
+  currency: Currency;
+  sourceNote: string | null;
+  createdAt: Date;
 };
 
 export class UnresolvedCashflowError extends Error {
@@ -234,6 +244,16 @@ export const propertyUpdateSchema = propertyFields
   .refine(valuationIsDated, { message: VALUATION_MESSAGE, path: ["estimatedValueAsOf"] });
 
 export type PropertyUpdateInput = z.input<typeof propertyUpdateSchema>;
+
+export const propertyValuationInputSchema = z.object({
+  propertyId: z.string().trim().min(1, "Bien requis."),
+  valuedOn: requiredDate,
+  amount: positiveAmount,
+  currency: currencyCode,
+  sourceNote: optionalText(500, "La note est limitée à 500 caractères."),
+});
+
+export type PropertyValuationInput = z.input<typeof propertyValuationInputSchema>;
 
 /**
  * Input contract for a sale.

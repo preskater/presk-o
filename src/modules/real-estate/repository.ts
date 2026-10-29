@@ -7,10 +7,16 @@ import {
   type PropertyCashflowDetail,
   type PropertyOccupancy,
   type PropertySummary,
+  type PropertyValuation,
 } from "./domain";
 import type { LoanSummary } from "./loans";
 import type { DueCashflow } from "./alerts";
-import { computeSaleAnalysis, type PropertySaleAnalysis } from "./valuation";
+import {
+  computeEquity,
+  computeSaleAnalysis,
+  latestPropertyValuation,
+  type PropertySaleAnalysis,
+} from "./valuation";
 
 /** Real-estate persistence. Every query is scoped to the workspace. */
 
@@ -29,6 +35,16 @@ const PROPERTY_SELECT = {
   salePrice: true,
   saleCosts: true,
   notes: true,
+  valuations: {
+    select: {
+      id: true,
+      valuedOn: true,
+      amount: true,
+      currency: true,
+      sourceNote: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 const CASHFLOW_SELECT = {
@@ -74,7 +90,17 @@ type PropertyRow = {
   salePrice: DecimalLike | null;
   saleCosts: DecimalLike | null;
   notes: string | null;
+  valuations: ValuationRow[];
   cashflows: CashflowRow[];
+};
+
+type ValuationRow = {
+  id: string;
+  valuedOn: Date;
+  amount: DecimalLike;
+  currency: string;
+  sourceNote: string | null;
+  createdAt: Date;
 };
 
 function toOptionalDecimal(value: DecimalLike | null): Decimal | null {
@@ -99,6 +125,17 @@ function toCashflowDetail(row: CashflowRow): PropertyCashflowDetail {
         }
       : null,
     notes: row.notes,
+    createdAt: row.createdAt,
+  };
+}
+
+function toValuation(row: ValuationRow): PropertyValuation {
+  return {
+    id: row.id,
+    valuedOn: row.valuedOn,
+    amount: new Decimal(row.amount.toString()),
+    currency: assertCurrency(row.currency),
+    sourceNote: row.sourceNote,
     createdAt: row.createdAt,
   };
 }
@@ -137,6 +174,7 @@ function toPropertySummary(
     targetGainRate: new Decimal(row.targetGainRate.toString()),
     salePrice: toOptionalDecimal(row.salePrice),
     saleCosts: toOptionalDecimal(row.saleCosts),
+    valuations: row.valuations.map(toValuation),
   };
 }
 
@@ -203,7 +241,24 @@ export async function getPropertyDetail(
     loans,
   });
 
-  return { ...summary, cashflows, loans, analysis };
+  const latestValuation = latestPropertyValuation(summary.valuations);
+  const valuationInCurrency =
+    latestValuation?.currency === summary.priceCurrency ? latestValuation : null;
+  const valuationAnalysis = latestValuation
+    ? computeEquity(valuationInCurrency, analysis.outstandingDebt, summary.priceCurrency)
+    : null;
+
+  return {
+    ...summary,
+    cashflows,
+    loans,
+    analysis: {
+      ...analysis,
+      estimatedValue: latestValuation ? valuationInCurrency?.amount ?? null : analysis.estimatedValue,
+      estimatedValueAsOf: latestValuation ? latestValuation.valuedOn : analysis.estimatedValueAsOf,
+      estimatedEquity: latestValuation ? valuationAnalysis : analysis.estimatedEquity,
+    },
+  };
 }
 
 export async function countProperties(workspaceId: string): Promise<number> {
@@ -279,9 +334,24 @@ function toPropertyData(input: PropertyWriteInput) {
 export async function createProperty(
   input: PropertyWriteInput & { workspaceId: string },
 ): Promise<{ id: string }> {
-  return getPrisma().property.create({
-    data: { workspaceId: input.workspaceId, ...toPropertyData(input) },
-    select: { id: true },
+  return getPrisma().$transaction(async (tx) => {
+    const property = await tx.property.create({
+      data: { workspaceId: input.workspaceId, ...toPropertyData(input) },
+      select: { id: true },
+    });
+
+    if (input.estimatedValue !== null && input.estimatedValueAsOf !== null) {
+      await tx.propertyValuation.create({
+        data: {
+          propertyId: property.id,
+          valuedOn: input.estimatedValueAsOf,
+          amount: input.estimatedValue.toFixed(2),
+          currency: input.currency,
+        },
+      });
+    }
+
+    return property;
   });
 }
 
@@ -291,12 +361,25 @@ export async function updateProperty(
   propertyId: string,
   input: PropertyWriteInput,
 ): Promise<boolean> {
-  const { count } = await getPrisma().property.updateMany({
-    where: { id: propertyId, workspaceId },
-    data: toPropertyData(input),
-  });
+  return getPrisma().$transaction(async (tx) => {
+    const { count } = await tx.property.updateMany({
+      where: { id: propertyId, workspaceId },
+      data: toPropertyData(input),
+    });
 
-  return count === 1;
+    if (count === 1 && input.estimatedValue !== null && input.estimatedValueAsOf !== null) {
+      await tx.propertyValuation.create({
+        data: {
+          propertyId,
+          valuedOn: input.estimatedValueAsOf,
+          amount: input.estimatedValue.toFixed(2),
+          currency: input.currency,
+        },
+      });
+    }
+
+    return count === 1;
+  });
 }
 
 /**
@@ -337,6 +420,36 @@ export async function savePropertySale(
   });
 
   return count === 1;
+}
+
+export async function createPropertyValuation(
+  workspaceId: string,
+  input: {
+    propertyId: string;
+    valuedOn: Date;
+    amount: Decimal;
+    currency: Currency;
+    sourceNote: string | null;
+  },
+): Promise<{ id: string } | null> {
+  const property = await getPrisma().property.findFirst({
+    where: { id: input.propertyId, workspaceId },
+    select: { id: true },
+  });
+  if (!property) {
+    return null;
+  }
+
+  return getPrisma().propertyValuation.create({
+    data: {
+      propertyId: property.id,
+      valuedOn: input.valuedOn,
+      amount: input.amount.toFixed(2),
+      currency: input.currency,
+      sourceNote: input.sourceNote,
+    },
+    select: { id: true },
+  });
 }
 
 /**

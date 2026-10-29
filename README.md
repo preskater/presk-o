@@ -110,7 +110,8 @@ Working today:
   payment and insurance — with create, edit and delete, kept deliberately apart from
   the operating figures: financing never enters the property totals, and a missing
   balance or rate reads "inconnu", never zero.
-- Property detail page (`/real-estate/{id}`): acquisition price, dated valuation,
+- Property detail page (`/real-estate/{id}`): acquisition price, append-only valuation
+  history and current equity,
   full history (purchase, cashflows, loans, valuation, sale), and a **sale indicator**
   computing the net invested capital, the break-even sale price and the target price
   (break-even + the property's margin). A property can be edited, **sold** (date,
