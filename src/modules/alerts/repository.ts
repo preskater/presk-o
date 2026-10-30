@@ -79,10 +79,28 @@ const STATUS_ORDER: AlertStatus[] = ["ACTIVE", "DISMISSED", "RESOLVED"];
  */
 export async function listAlerts(
   workspaceId: string,
-  options: { status?: AlertStatus; take?: number } = {},
+  options: {
+    status?: AlertStatus;
+    take?: number;
+    /** Inclusive lower bound on the trigger instant. */
+    from?: Date;
+    /** Exclusive upper bound on the trigger instant. */
+    to?: Date;
+  } = {},
 ): Promise<AlertRecord[]> {
   const rows = await getPrisma().alert.findMany({
-    where: { workspaceId, ...(options.status ? { status: options.status } : {}) },
+    where: {
+      workspaceId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.from || options.to
+        ? {
+            triggeredAt: {
+              ...(options.from ? { gte: options.from } : {}),
+              ...(options.to ? { lt: options.to } : {}),
+            },
+          }
+        : {}),
+    },
     orderBy: { triggeredAt: "desc" },
     ...(options.take ? { take: options.take } : {}),
     select: ALERT_SELECT,

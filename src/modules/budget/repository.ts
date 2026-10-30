@@ -1054,6 +1054,59 @@ export async function listBudgets(
   return rows.map(toBudgetRecord);
 }
 
+/** One month bound of an export window; `undefined` on a side means "unbounded". */
+export type BudgetPeriodBound = { year: number; month: number };
+
+/**
+ * Budgets over a window of whole months, oldest first, for the CSV export.
+ *
+ * `year` and `month` are two separate columns, so a range cannot be expressed as one
+ * comparison: each bound becomes an `OR` of "a later year" or "this year, from this
+ * month". The read is bounded by `take`, which the caller sets one row above its export
+ * cap so a cut is provable rather than silent.
+ */
+export async function listBudgetsInRange(
+  workspaceId: string,
+  options: { from?: BudgetPeriodBound; to?: BudgetPeriodBound; take: number },
+): Promise<BudgetRecord[]> {
+  const bounds = [
+    ...(options.from
+      ? [
+          {
+            OR: [
+              { year: { gt: options.from.year } },
+              { year: options.from.year, month: { gte: options.from.month } },
+            ],
+          },
+        ]
+      : []),
+    ...(options.to
+      ? [
+          {
+            OR: [
+              { year: { lt: options.to.year } },
+              { year: options.to.year, month: { lte: options.to.month } },
+            ],
+          },
+        ]
+      : []),
+  ];
+
+  const rows = await getPrisma().budget.findMany({
+    where: { workspaceId, ...(bounds.length > 0 ? { AND: bounds } : {}) },
+    orderBy: [
+      { year: "asc" },
+      { month: "asc" },
+      { currency: "asc" },
+      { category: { name: "asc" } },
+    ],
+    take: options.take,
+    select: BUDGET_SELECT,
+  });
+
+  return rows.map(toBudgetRecord);
+}
+
 /** One budget, scoped to its owner: read before an edition so the form shows the row. */
 export async function findBudget(
   workspaceId: string,
@@ -1720,13 +1773,37 @@ function toGoalRecord(row: GoalRow): GoalRecord {
   };
 }
 
-/** All the owner's goals, oldest first, so the list reads like a register. */
+/**
+ * All the owner's goals, oldest first, so the list reads like a register.
+ *
+ * The export passes a `status` and a `targetDate` window; filtering in the query rather
+ * than after the read is what makes the row bound truthful — a window read and then
+ * filtered could return fewer rows than it holds.
+ */
 export async function listGoals(
   workspaceId: string,
-  options: { take?: number } = {},
+  options: {
+    take?: number;
+    status?: GoalStatus;
+    /** Inclusive lower bound on the target date. */
+    from?: Date;
+    /** Exclusive upper bound on the target date. */
+    to?: Date;
+  } = {},
 ): Promise<GoalRecord[]> {
   const rows = await getPrisma().goal.findMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.from || options.to
+        ? {
+            targetDate: {
+              ...(options.from ? { gte: options.from } : {}),
+              ...(options.to ? { lt: options.to } : {}),
+            },
+          }
+        : {}),
+    },
     orderBy: [{ createdAt: "asc" }],
     ...(options.take ? { take: options.take } : {}),
     select: GOAL_SELECT,

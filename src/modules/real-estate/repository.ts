@@ -178,10 +178,31 @@ function toPropertySummary(
   };
 }
 
-export async function listProperties(workspaceId: string): Promise<PropertySummary[]> {
+/**
+ * Every property of the workspace, by name, with its totals.
+ *
+ * The export may pass a `purchaseDate` window. A property without an acquisition date
+ * is left out of a windowed read — it cannot be said to belong to the period, and
+ * guessing would put a row in a file the owner did not ask for.
+ */
+export async function listProperties(
+  workspaceId: string,
+  options: { from?: Date; to?: Date; take?: number } = {},
+): Promise<PropertySummary[]> {
   const rows = await getPrisma().property.findMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      ...(options.from || options.to
+        ? {
+            purchaseDate: {
+              ...(options.from ? { gte: options.from } : {}),
+              ...(options.to ? { lt: options.to } : {}),
+            },
+          }
+        : {}),
+    },
     orderBy: { name: "asc" },
+    ...(options.take ? { take: options.take } : {}),
     select: { ...PROPERTY_SELECT, cashflows: { select: CASHFLOW_SELECT } },
   });
 
