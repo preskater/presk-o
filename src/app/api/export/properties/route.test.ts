@@ -44,6 +44,7 @@ const PROPERTY = {
   saleDate: null,
   notes: null,
   cashflowCount: 3,
+  foreignCurrencyCashflows: 1,
   income: new Decimal("1800.00"),
   expenses: new Decimal("-220.50"),
   net: new Decimal("1579.50"),
@@ -58,7 +59,7 @@ const PROPERTY = {
 };
 
 const HEADER =
-  "nom,adresse,occupation,date_acquisition,prix_acquisition,valeur_estimee,valeur_estimee_au,objectif_plus_value_pct,date_cession,prix_cession,frais_cession,devise,devise_prix,recettes,charges,solde,nombre_de_flux,notes";
+  "nom,adresse,occupation,date_acquisition,prix_acquisition,valeur_estimee,valeur_estimee_au,objectif_plus_value_pct,date_cession,prix_cession,frais_cession,devise,devise_prix,recettes,charges,solde,nombre_de_flux,flux_hors_devise_des_totaux,notes";
 
 async function bodyOf(response: Response): Promise<string[]> {
   return (await response.text()).replace(/^\uFEFF/, "").split("\r\n");
@@ -111,7 +112,7 @@ describe("GET /api/export/properties", () => {
     const lines = await bodyOf(response);
     expect(lines[0]).toBe(HEADER);
     expect(lines[1]).toBe(
-      'Appartement Bastille,"12 rue de la Roquette, Paris",RENTED,2021-05-15,250000.00,280000.00,2026-09-01,10.00,,,,EUR,EUR,1800.00,-220.50,1579.50,3,',
+      'Appartement Bastille,"12 rue de la Roquette, Paris",RENTED,2021-05-15,250000.00,280000.00,2026-09-01,10.00,,,,EUR,EUR,1800.00,-220.50,1579.50,3,1,',
     );
   });
 
