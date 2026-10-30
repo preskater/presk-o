@@ -118,6 +118,13 @@ Working today:
   price, costs — the page then shows the net proceeds and the gain) or **deleted**
   with its cashflows and loans; the removal panel asks which of the two is meant.
   Missing prices, costs or loan balances read "inconnu", never zero.
+- Property performance indicators (property detail, « Indicateurs de performance »):
+  rental income, operating expenses, NOI, gross and net yield, occupancy and cash flow
+  after financing, over one explicit twelve-month window — the last twelve months
+  (default) or a calendar year, chosen with `?period=`. A figure that cannot be
+  computed says why (no acquisition price, incomplete year, another currency, missing
+  loan payment) instead of showing a zero, and a window without any cashflow prints no
+  figures at all.
 - GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,

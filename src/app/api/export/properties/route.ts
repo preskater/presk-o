@@ -25,6 +25,8 @@ type PropertyRow = {
   expenses: string;
   net: string;
   cashflowCount: string;
+  /** Entries in another currency, excluded from the totals above and never converted. */
+  foreignCurrencyCashflows: string;
   notes: string;
 };
 
@@ -46,6 +48,7 @@ const COLUMNS: CsvColumn<PropertyRow>[] = [
   { key: "expenses", header: "charges" },
   { key: "net", header: "solde" },
   { key: "cashflowCount", header: "nombre_de_flux" },
+  { key: "foreignCurrencyCashflows", header: "flux_hors_devise_des_totaux" },
   { key: "notes", header: "notes" },
 ];
 
@@ -80,6 +83,7 @@ export async function GET(): Promise<Response> {
     expenses: property.expenses.toFixed(2),
     net: property.net.toFixed(2),
     cashflowCount: String(property.cashflowCount),
+    foreignCurrencyCashflows: String(property.foreignCurrencyCashflows),
     notes: property.notes ?? "",
   }));
 

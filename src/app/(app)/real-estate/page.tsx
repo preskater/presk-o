@@ -127,6 +127,7 @@ export default async function RealEstatePage({
         expenses: property.expenses,
         currency: property.currency,
       },
+      totalsComplete: property.foreignCurrencyCashflows === 0,
       loans: loansByProperty.get(property.id) ?? [],
     });
 
@@ -446,7 +447,15 @@ export default async function RealEstatePage({
                           Aucun flux enregistré
                         </span>
                       ) : (
-                        `${property.cashflowCount} entrée${property.cashflowCount > 1 ? "s" : ""}`
+                        <>
+                          {`${property.cashflowCount} entrée${property.cashflowCount > 1 ? "s" : ""}`}
+                          {property.foreignCurrencyCashflows > 0 ? (
+                            <span className="block text-xs text-amber-700 dark:text-amber-300">
+                              dont {property.foreignCurrencyCashflows} hors {property.currency},
+                              exclu{property.foreignCurrencyCashflows > 1 ? "s" : ""}
+                            </span>
+                          ) : null}
+                        </>
                       )}
                     </td>
                     <td className={`${tdClass} text-right tabular-nums`}>

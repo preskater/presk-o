@@ -111,6 +111,13 @@ export type SaleAnalysisInput = {
   saleCosts: Decimal | null;
   /** Operating totals of the property, and the currency they are expressed in. */
   totals: Pick<PropertyTotals, "income" | "expenses" | "currency">;
+  /**
+   * False when some cashflows of the property are in another currency and are
+   * therefore missing from `totals`. A partial total makes the net invested capital
+   * unknown: adding up one currency and calling it the property's result would
+   * understate the rents. Defaults to true.
+   */
+  totalsComplete?: boolean;
   loans: readonly Pick<LoanSummary, "currency" | "outstandingBalance">[];
 };
 
@@ -169,7 +176,8 @@ export function computeSaleProceeds(input: {
 }
 
 export function computeSaleAnalysis(input: SaleAnalysisInput): PropertySaleAnalysis {
-  const currencyMismatch = input.totals.currency !== input.currency;
+  const currencyMismatch =
+    input.totals.currency !== input.currency || input.totalsComplete === false;
 
   const netInvested =
     input.purchasePrice === null || currencyMismatch
