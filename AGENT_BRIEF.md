@@ -31,7 +31,8 @@ src/
   app/login/         sign-in page
   components/        shared UI (forms, server-rendered SVG charts, navigation)
   modules/           business rules per module: identity, budget, real-estate,
-                     integrations, dashboard (domain.ts / repository.ts inside each)
+                     integrations, alerts, dashboard, audit, catalog
+                     (domain.ts / repository.ts inside each)
   lib/               db, env, money, dates, csv, crypto, auth helpers
   jobs/sync.ts       idempotent synchronisation functions (no scheduler shipped)
   generated/prisma/  generated client — git-ignored; run `npm run db:generate`
@@ -167,8 +168,11 @@ http://dashboard.localhost:8888 (the proxy belongs to the `full` profile).
   than partial when a read is truncated); a manual CSV import page
   (`/budget/import`: parsed in the browser, dedicated Server Action with
   debit/credit pair, duplicate detection, `import:` references, 2 000-row bound);
-  CSV export at `/api/export/transactions` (month, `?year=`, `?all=1`; `no-store`,
-  formula neutralisation, bounded by `EXPORT_ROW_LIMIT`); monthly
+  CSV export at `/api/export/transactions` (month, `?year=`, `?all=1`, or an explicit
+  inclusive `from`/`to` window; `no-store`, formula neutralisation, bounded by
+  `EXPORT_ROW_LIMIT` with `X-Export-Truncated` when the cap cuts the file, one audit entry
+  per delivered file); the umbrella `/api/export?entity=...` selects the same builder;
+  monthly
   budgets per category and currency (create, edit
   via `?editBudget=<id>`, delete with a confirmation step — a positive planned
   amount, duplicates rejected, currencies never converted; a "copy last month"

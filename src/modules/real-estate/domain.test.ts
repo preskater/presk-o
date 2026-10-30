@@ -8,6 +8,7 @@ import {
   propertySaleInputSchema,
   propertyUpdateSchema,
   resolveCashflowAmount,
+  selectCashflowTotalsCurrency,
   UnresolvedCashflowError,
   type CashflowEntry,
 } from "./domain";
@@ -57,6 +58,39 @@ describe("resolveCashflowAmount", () => {
 
   it("refuses an entry with neither a transaction nor an amount", () => {
     expect(() => resolveCashflowAmount(entry())).toThrow(UnresolvedCashflowError);
+  });
+});
+
+describe("selectCashflowTotalsCurrency", () => {
+  it("prefers the property's reference currency whenever an entry uses it", () => {
+    expect(
+      selectCashflowTotalsCurrency([entry({ currency: "USD" }), entry({ currency: "EUR" })], "EUR"),
+    ).toBe("EUR");
+  });
+
+  it("falls back to the first entry's currency when the reference one is absent", () => {
+    expect(
+      selectCashflowTotalsCurrency([entry({ currency: "USD" })], "EUR"),
+    ).toBe("USD");
+  });
+
+  it("reports the reference currency for a property without any entry", () => {
+    expect(selectCashflowTotalsCurrency([], "CHF")).toBe("CHF");
+  });
+
+  it("selects a subset that never mixes two currencies in one total", () => {
+    const entries = [
+      entry({ id: "eur", kind: "INCOME", amount: new Decimal("900.00"), currency: "EUR" }),
+      entry({ id: "usd", kind: "INCOME", amount: new Decimal("500.00"), currency: "USD" }),
+    ];
+    const currency = selectCashflowTotalsCurrency(entries, "EUR");
+    const totals = computePropertyTotals(
+      entries.filter((candidate) => candidate.currency === currency),
+      { currency },
+    );
+
+    expect(totals.income.toFixed(2)).toBe("900.00");
+    expect(entries.length - 1).toBe(1);
   });
 });
 

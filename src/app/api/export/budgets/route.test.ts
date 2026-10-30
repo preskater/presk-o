@@ -3,14 +3,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiAccessMock = vi.fn();
 const listBudgetsMock = vi.fn();
+const listBudgetsInRangeMock = vi.fn();
+const recordAuditEventMock = vi.fn();
 
 vi.mock("@/lib/auth/guard", () => ({
   // The real gate is covered by `src/lib/auth/guard.test.ts` and the route × role
   // matrix; these tests pin the route's read and CSV behaviour.
   requireApiAccess: (...args: unknown[]) => requireApiAccessMock(...args),
+  moduleUnavailableResponse: () =>
+    Response.json({ error: "not_found" }, { status: 404, headers: { "Cache-Control": "no-store" } }),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listBudgets: (...args: unknown[]) => listBudgetsMock(...args),
+  listBudgetsInRange: (...args: unknown[]) => listBudgetsInRangeMock(...args),
+}));
+vi.mock("@/modules/audit/repository", () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
 }));
 
 const { GET } = await import("./route");
@@ -52,6 +60,8 @@ beforeEach(() => {
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 6, 12, 0)));
   requireApiAccessMock.mockReset().mockResolvedValue(OWNER);
   listBudgetsMock.mockReset().mockResolvedValue([BUDGET_EUR, BUDGET_USD]);
+  listBudgetsInRangeMock.mockReset().mockResolvedValue([BUDGET_EUR, BUDGET_USD]);
+  recordAuditEventMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -106,6 +116,85 @@ describe("GET /api/export/budgets", () => {
 
     await GET(new Request("http://test.local/api/export/budgets?month=2026-13"));
     expect(listBudgetsMock).toHaveBeenLastCalledWith(OWNER.workspace.id, { year: 2026, month: 10 });
+  });
+
+
+  it("exports a window of whole months, each row carrying its own month", async () => {
+    listBudgetsInRangeMock.mockResolvedValue([
+      BUDGET_EUR,
+      { ...BUDGET_EUR, id: "budget-2", year: 2026, month: 3, amount: new Decimal("420") },
+    ]);
+
+    const response = await GET(
+      new Request("http://test.local/api/export/budgets?from=2026-01-15&to=2026-03-02"),
+    );
+
+    // A budget is stored per month: the window snaps to January-March 2026.
+    expect(listBudgetsInRangeMock).toHaveBeenCalledWith(OWNER.workspace.id, {
+      from: { year: 2026, month: 1 },
+      to: { year: 2026, month: 3 },
+      take: 10_001,
+    });
+    expect(listBudgetsMock).not.toHaveBeenCalled();
+
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="budgets-2026-01_2026-03.csv"',
+    );
+
+    const lines = (await response.text()).replace(/^\uFEFF/, "").split("\r\n");
+    expect(lines[1]).toBe("2026-09,Courses,EXPENSE,EUR,400.00");
+    expect(lines[2]).toBe("2026-03,Courses,EXPENSE,EUR,420.00");
+  });
+
+  it("ends on the month of the last included day, even at a month boundary", async () => {
+    await GET(new Request("http://test.local/api/export/budgets?to=2026-03-31"));
+
+    // The exclusive end is 2026-04-01; stepping back a day keeps March, not April.
+    expect(listBudgetsInRangeMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      from: undefined,
+      to: { year: 2026, month: 3 },
+      take: 10_001,
+    });
+  });
+
+  it("keeps one side of a month window open", async () => {
+    await GET(new Request("http://test.local/api/export/budgets?from=2026-01-01"));
+
+    expect(listBudgetsInRangeMock).toHaveBeenLastCalledWith(OWNER.workspace.id, {
+      from: { year: 2026, month: 1 },
+      to: undefined,
+      take: 10_001,
+    });
+  });
+
+  it("refuses a reversed window instead of exporting the wrong months", async () => {
+    const response = await GET(
+      new Request("http://test.local/api/export/budgets?from=2026-06-01&to=2026-01-31"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(listBudgetsMock).not.toHaveBeenCalled();
+    expect(listBudgetsInRangeMock).not.toHaveBeenCalled();
+  });
+
+  it("records the export in the audit trail with its scope and row count", async () => {
+    await GET(new Request("http://test.local/api/export/budgets?month=2026-09"));
+
+    expect(recordAuditEventMock).toHaveBeenCalledWith({
+      workspaceId: OWNER.workspace.id,
+      actorId: OWNER.id,
+      action: "export.budgets",
+      entityType: "EXPORT",
+      outcome: "SUCCESS",
+      metadata: {
+        entity: "budgets",
+        scope: "month",
+        from: "2026-09",
+        to: undefined,
+        rows: 2,
+        truncated: false,
+      },
+    });
   });
 
   it("writes a header line even when the month has no budget", async () => {

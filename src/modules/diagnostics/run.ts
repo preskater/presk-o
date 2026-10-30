@@ -17,7 +17,7 @@ import {
 } from "./checks";
 
 /**
- * Runs every diagnostic for the signed-in owner, server-side (SO-03).
+ * Runs every diagnostic for the signed-in owner's workspace, server-side (SO-03).
  *
  * The probes read the system; `checks.ts` decides what it means. Each probe that can
  * fail returns null rather than throwing, so one broken part never hides the others,
@@ -37,7 +37,7 @@ export type DiagnosticsProbes = {
   appliedMigrations: () => Promise<AppliedMigration[] | null>;
   expectedMigrations: () => Promise<string[] | null>;
   backupFiles: () => Promise<string[] | null>;
-  connections: (userId: string) => Promise<Parameters<typeof checkConnections>[0]>;
+  connections: (workspaceId: string) => Promise<Parameters<typeof checkConnections>[0]>;
   env: () => { encryptionKey?: string; authSecret?: string; build?: string };
 };
 
@@ -81,7 +81,7 @@ export const systemProbes: DiagnosticsProbes = {
     orNull(() =>
       readdir(process.env.BACKUP_DIR || join(/* turbopackIgnore: true */ process.cwd(), "infra", "backups")),
     ),
-  connections: (userId) => orNull(() => listConnections(userId)),
+  connections: (workspaceId) => orNull(() => listConnections(workspaceId)),
   env: () => ({
     encryptionKey: process.env.INTEGRATION_ENCRYPTION_KEY,
     authSecret: process.env.AUTH_SECRET,
@@ -92,7 +92,7 @@ export const systemProbes: DiagnosticsProbes = {
 const SEVERITY: Record<CheckStatus, number> = { ok: 0, warning: 1, error: 2 };
 
 export async function runDiagnostics(
-  userId: string,
+  workspaceId: string,
   probes: DiagnosticsProbes = systemProbes,
   now: Date = new Date(),
 ): Promise<DiagnosticsReport> {
@@ -102,7 +102,7 @@ export async function runDiagnostics(
     probes.appliedMigrations(),
     probes.expectedMigrations(),
     probes.backupFiles(),
-    probes.connections(userId),
+    probes.connections(workspaceId),
   ]);
 
   const checks = [

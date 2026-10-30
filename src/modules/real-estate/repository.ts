@@ -3,6 +3,7 @@ import { getPrisma } from "@/lib/db";
 import { assertCurrency, type Currency } from "@/lib/money";
 import {
   computePropertyTotals,
+  selectCashflowTotalsCurrency,
   type CashflowKind,
   type PropertyCashflowDetail,
   type PropertyOccupancy,
@@ -143,16 +144,23 @@ function toValuation(row: ValuationRow): PropertyValuation {
 /**
  * Summary of one property, with its operating totals.
  *
- * `currency` is the cashflow totals currency (entries carry their own) while
- * `priceCurrency` is the reference currency of the acquisition, valuation and sale
- * prices. They are kept distinct so a caller can never silently mix both ledgers.
+ * `currency` is the cashflow totals currency while `priceCurrency` is the reference
+ * currency of the acquisition, valuation and sale prices. They are kept distinct so a
+ * caller can never silently mix both ledgers.
+ *
+ * Entries in the price currency are the ones totalled; an entry in another currency is
+ * counted in `foreignCurrencyCashflows` and excluded, because converting it would invent
+ * a rate. A property whose entries are all in another currency still reports its own
+ * totals in that entry currency, so an existing ledger never disappears.
  */
 function toPropertySummary(
   row: Omit<PropertyRow, "cashflows">,
   entries: PropertyCashflowDetail[],
 ): PropertySummary {
-  const currency: Currency = entries[0]?.currency ?? "EUR";
-  const totals = computePropertyTotals(entries, { currency });
+  const priceCurrency = assertCurrency(row.currency);
+  const currency = selectCashflowTotalsCurrency(entries, priceCurrency);
+  const inCurrency = entries.filter((entry) => entry.currency === currency);
+  const totals = computePropertyTotals(inCurrency, { currency });
 
   return {
     id: row.id,
@@ -167,7 +175,8 @@ function toPropertySummary(
     expenses: totals.expenses,
     net: totals.net,
     currency,
-    priceCurrency: assertCurrency(row.currency),
+    foreignCurrencyCashflows: entries.length - inCurrency.length,
+    priceCurrency,
     purchasePrice: toOptionalDecimal(row.purchasePrice),
     estimatedValue: toOptionalDecimal(row.estimatedValue),
     estimatedValueAsOf: row.estimatedValueAsOf,
@@ -178,10 +187,31 @@ function toPropertySummary(
   };
 }
 
-export async function listProperties(workspaceId: string): Promise<PropertySummary[]> {
+/**
+ * Every property of the workspace, by name, with its totals.
+ *
+ * The export may pass a `purchaseDate` window. A property without an acquisition date
+ * is left out of a windowed read — it cannot be said to belong to the period, and
+ * guessing would put a row in a file the owner did not ask for.
+ */
+export async function listProperties(
+  workspaceId: string,
+  options: { from?: Date; to?: Date; take?: number } = {},
+): Promise<PropertySummary[]> {
   const rows = await getPrisma().property.findMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      ...(options.from || options.to
+        ? {
+            purchaseDate: {
+              ...(options.from ? { gte: options.from } : {}),
+              ...(options.to ? { lt: options.to } : {}),
+            },
+          }
+        : {}),
+    },
     orderBy: { name: "asc" },
+    ...(options.take ? { take: options.take } : {}),
     select: { ...PROPERTY_SELECT, cashflows: { select: CASHFLOW_SELECT } },
   });
 
@@ -238,6 +268,7 @@ export async function getPropertyDetail(
       expenses: summary.expenses,
       currency: summary.currency,
     },
+    totalsComplete: summary.foreignCurrencyCashflows === 0,
     loans,
   });
 

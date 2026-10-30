@@ -20,17 +20,20 @@ vi.mock("@/modules/identity/repository", () => ({
 
 const listAlertsMock = vi.fn();
 const listBudgetsMock = vi.fn();
+const listBudgetsInRangeMock = vi.fn();
 const listGoalsMock = vi.fn();
 const readAccountBalanceMock = vi.fn();
 const sumGoalContributionsMock = vi.fn();
 const listTransactionsMock = vi.fn();
 const listPropertiesMock = vi.fn();
+const recordAuditEventMock = vi.fn();
 
 vi.mock("@/modules/alerts/repository", () => ({
   listAlerts: (...args: unknown[]) => listAlertsMock(...args),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listBudgets: (...args: unknown[]) => listBudgetsMock(...args),
+  listBudgetsInRange: (...args: unknown[]) => listBudgetsInRangeMock(...args),
   listGoals: (...args: unknown[]) => listGoalsMock(...args),
   readAccountBalance: (...args: unknown[]) => readAccountBalanceMock(...args),
   sumGoalContributions: (...args: unknown[]) => sumGoalContributionsMock(...args),
@@ -38,6 +41,9 @@ vi.mock("@/modules/budget/repository", () => ({
 }));
 vi.mock("@/modules/real-estate/repository", () => ({
   listProperties: (...args: unknown[]) => listPropertiesMock(...args),
+}));
+vi.mock("@/modules/audit/repository", () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
 }));
 
 const alertsRoute = await import("./alerts/route");
@@ -126,14 +132,18 @@ beforeEach(() => {
   for (const mock of [
     listAlertsMock,
     listBudgetsMock,
+    listBudgetsInRangeMock,
     listGoalsMock,
     readAccountBalanceMock,
     sumGoalContributionsMock,
     listTransactionsMock,
     listPropertiesMock,
+    recordAuditEventMock,
   ]) {
     mock.mockReset().mockResolvedValue([]);
   }
+
+  recordAuditEventMock.mockResolvedValue(undefined);
 });
 
 describe.each(ROUTES)("GET /api/export/$name", (route) => {
@@ -194,7 +204,9 @@ describe("module gate", () => {
       { ...membership("OWNER"), modules: ["budget"] },
     ]);
 
-    const response = await propertiesRoute.GET();
+    const response = await propertiesRoute.GET(
+      new Request("http://test.local/api/export/properties"),
+    );
 
     expect(response.status).toBe(404);
     expect(listPropertiesMock).not.toHaveBeenCalled();

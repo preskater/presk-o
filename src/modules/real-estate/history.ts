@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import type { Currency } from "@/lib/money";
 import {
+  cashflowEntryDate,
   resolveCashflowAmount,
   type PropertyCashflowDetail,
 } from "./domain";
@@ -102,9 +103,7 @@ export function buildPropertyHistory(input: {
 
     events.push({
       id: `cashflow-${cashflow.id}`,
-      // A settled entry is dated by its settlement; an open one by its due date;
-      // an entry with neither keeps its creation date, so it is never undated.
-      date: cashflow.settledAt ?? cashflow.dueDate ?? cashflow.createdAt,
+      date: cashflowEntryDate(cashflow),
       kind: "CASHFLOW",
       title: cashflow.label,
       detail: describeCashflow(cashflow),

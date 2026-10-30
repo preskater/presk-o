@@ -81,6 +81,12 @@ export type PropertySummary = {
   net: Decimal;
   /** Currency of the cashflow totals above (entries carry their own). */
   currency: Currency;
+  /**
+   * Entries of this property that are not in `currency`: they are excluded from the
+   * totals instead of being converted. A non-zero count means the totals describe one
+   * currency only — never a sum of two.
+   */
+  foreignCurrencyCashflows: number;
   /** Reference currency of the prices below; never mixed with another one. */
   priceCurrency: Currency;
   purchasePrice: Decimal | null;
@@ -110,6 +116,20 @@ export class UnresolvedCashflowError extends Error {
   }
 }
 
+/**
+ * The date a cashflow is attributed to.
+ *
+ * A settled entry is dated by its settlement, an open one by its due date, and an
+ * entry with neither by its creation, so it is never undated. The history and the
+ * period indicators both read this rule: they can never place one entry in two
+ * different periods.
+ */
+export function cashflowEntryDate(
+  entry: Pick<PropertyCashflowDetail, "settledAt" | "dueDate" | "createdAt">,
+): Date {
+  return entry.settledAt ?? entry.dueDate ?? entry.createdAt;
+}
+
 /** Returns the amount a cashflow contributes, once and only once. */
 export function resolveCashflowAmount(entry: CashflowEntry): Decimal {
   if (entry.transaction) {
@@ -121,6 +141,26 @@ export function resolveCashflowAmount(entry: CashflowEntry): Decimal {
   }
 
   throw new UnresolvedCashflowError(entry.id);
+}
+
+/**
+ * The currency a property's cashflow totals are expressed in.
+ *
+ * The property's own reference currency wins as soon as one entry uses it: the totals
+ * then cover that ledger and the caller excludes (and counts) every other entry, because
+ * summing two currencies would invent a rate. Without such an entry, the first entry's
+ * currency is used so an existing ledger never disappears, and a property without any
+ * entry reports its reference currency rather than a default.
+ */
+export function selectCashflowTotalsCurrency(
+  entries: readonly Pick<CashflowEntry, "currency">[],
+  reference: Currency,
+): Currency {
+  if (entries.some((entry) => entry.currency === reference)) {
+    return reference;
+  }
+
+  return entries[0]?.currency ?? reference;
 }
 
 export type PropertyTotals = {

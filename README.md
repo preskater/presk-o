@@ -102,11 +102,17 @@ Working today:
   the rule quiet.
 - CSV exports: transactions (a month by default, `?year=YYYY` for a year or `?all=1`
   for every month, plus account/category/type/text/reconciliation filters and a
-  `pointe_le` column), budgets
-  (month), goals and alerts (status filter), plus the properties file — all behind the
-  session, `no-store`, formula-neutralised, and bounded at 10 000 rows rather than
-  streamed (the decision is documented in the architecture notes). An unknown value
-  exports as an empty cell with its reason, never as a zero.
+  `pointe_le` column), budgets (month or a whole-month window), goals and alerts (status
+  filter), plus the properties file — all behind the session, `no-store`,
+  formula-neutralised, and bounded at 10 000 rows rather than streamed (the decision is
+  documented in the architecture notes). `X-Export-Truncated: true` says the cap cut the
+  file. `/api/export?entity=transactions|properties|budgets|goals|alerts` selects the
+  same builders as the per-entity routes; an unknown entity answers 400 before any read.
+  `from`/`to` (`YYYY-MM-DD`, both inclusive) select an explicit window and win over the
+  month/year/all scopes; a malformed or reversed window is refused with a 400 rather than
+  silently exporting another period. Every delivered file writes one audit entry (scope,
+  bounds, row count, truncation); a file whose entry cannot be written is withheld. An
+  unknown value exports as an empty cell with its reason, never as a zero.
 - Real estate: properties and cashflow entries entered from the real-estate
   page, occupancy status, totals, due dates. A **Financement** card tracks the loans
   of a property — capital, a dated outstanding-balance snapshot, rate, term, monthly
@@ -121,6 +127,13 @@ Working today:
   price, costs — the page then shows the net proceeds and the gain) or **deleted**
   with its cashflows and loans; the removal panel asks which of the two is meant.
   Missing prices, costs or loan balances read "inconnu", never zero.
+- Property performance indicators (property detail, « Indicateurs de performance »):
+  rental income, operating expenses, NOI, gross and net yield, occupancy and cash flow
+  after financing, over one explicit twelve-month window — the last twelve months
+  (default) or a calendar year, chosen with `?period=`. A figure that cannot be
+  computed says why (no acquisition price, incomplete year, another currency, missing
+  loan payment) instead of showing a zero, and a window without any cashflow prints no
+  figures at all.
 - GitHub / GitLab connections: read-only adapters, encrypted tokens, manual
   synchronisation, project snapshots, and a small GitHub: open issues and pull
   requests counted per repository, an explorer with combinable filters (repository,
@@ -186,8 +199,8 @@ npm run db:seed          # creates the owner from SEED_OWNER_* variables
 npm run dev              # http://localhost:3000
 ```
 
-Ports 8888 (proxy), 3000 (application) and 5432 may already be used by another local
-project. Use `PORT=3100 npm run dev`, set `PROXY_PORT` for the proxy (see
+Ports 3000 (application or proxy) and 5432 may already be used by another local project.
+Use `PORT=3100 npm run dev`, set `APP_PORT` or `PROXY_PORT` (see
 [The proxy and the address you browse](#the-proxy-and-the-address-you-browse)), and set
 `POSTGRES_PORT` in `.env` (keeping `DATABASE_URL` consistent) when 5432 is taken.
 
@@ -242,14 +255,18 @@ recovery, on purpose.
 
 ### The proxy and the address you browse
 
-The `full` stack puts a small reverse proxy in front of the application: it is the
-front door, and the address to type is `http://dashboard.localhost:8888`. The proxy
-comes from `compose.override.yaml`, which Docker Compose loads automatically; without
-that file, the application port is published directly (`APP_BIND_HOST:APP_PORT`), as
-after the hotfix that removed the proxy.
+The `full` stack can put a small reverse proxy in front of the application: it is the
+front door, and the address to type is the origin described by `APP_HOST`, published on
+`PROXY_PORT`. The proxy comes from `compose.override.yaml`, which Docker Compose loads
+automatically; without that file, the application port is published directly
+(`APP_BIND_HOST:APP_PORT`), as after the hotfix that removed the proxy.
+
+`.env.example` describes `http://localhost:3000` / `3000`, which works for direct access
+and through the proxy. To use the origin the override falls back to when the variables
+are unset, set all three to `http://dashboard.localhost:8888` / `8888`.
 
 ```sh
-# AUTH_URL, APP_HOST and PROXY_PORT already describe that origin in .env
+# AUTH_URL, APP_HOST and PROXY_PORT must describe one single origin in .env
 docker compose --profile full up -d --build
 ```
 
@@ -258,16 +275,16 @@ Remove or rename `compose.override.yaml` to go back to direct access.
 Three variables describe that single origin, and they are not independent. A mismatch
 is invisible in `docker compose ps`: it only shows up in the browser.
 
-- `PROXY_PORT` is the port published on the host, 8888 by default.
+- `PROXY_PORT` is the port published on the host: `3000` in `.env.example`, and the
+  fallback when the variable is unset is `8888`.
 - `APP_HOST` is the site address the proxy answers for. It carries the same port,
   because Caddy listens on the port of its site address.
 - `AUTH_URL` is the origin the application is told to use for absolute URLs, the
   sign-in callback in particular.
 
-The application's own port (3000) stays published on loopback for debugging: it serves
-the same process, but not the origin Auth.js was told about. It is also a different
-host (`localhost`, not `dashboard.localhost`), so it is a separate session: useful for
-`curl`, not for signing in.
+Without the override, the application is published on `APP_BIND_HOST:APP_PORT` (3000 by
+default). With it, the app is no longer published at all: the proxy is the only entry
+point, and the app is reachable from the Compose network with `docker compose exec app`.
 
 `APP_HOST` also decides the scheme. `http://dashboard.localhost:8888` serves plain
 HTTP, which is what you want locally: there is no certificate to install. A bare
@@ -326,8 +343,8 @@ door refusing connections while `app` and `db` looked healthy — the proxy depe
 `app`, so the two belong together. `docker compose up -d` with no profile still starts
 PostgreSQL only.
 
-Publishing 8888 is now part of the full stack. Set `PROXY_PORT` if something else
-already holds it.
+Publishing the proxy port is now part of the full stack. Set `PROXY_PORT` if something
+else already holds it.
 
 ## Environment variables
 
@@ -439,8 +456,10 @@ running. No test connects to a database or performs a real network call: busines
 rules are called directly, provider adapters receive an injected fake `fetch`, and
 the action-level tests mock their modules. They cover what is expensive to get
 wrong: money and date handling, monthly totals (transfers counted by sign, refunds,
-currencies), CSV escaping and formula neutralisation, the export routes (filters,
-month boundaries, empty files, bounded reads, owner scoping), the password policy
+currencies), CSV escaping and formula neutralisation, the export routes and the umbrella
+selector (filters and their boundaries, invalid windows, empty files, bounded reads,
+truncation header, owner scoping, audit entries), the audit metadata redaction, the
+password policy
 and the session guard, provider failure cases, issue filters and milestones.
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request:
@@ -448,13 +467,23 @@ install, generate the Prisma client, lint, type check, unit tests, apply the
 migrations on a fresh PostgreSQL service container, then build. The secrets it uses
 are fictitious values that only let the build run.
 
+## Operations
+
+Operational runbooks live in [`docs/operations/`](docs/operations/README.md): local
+setup, migration deployment, backup and restore, provider token rotation, failed
+synchronisation recovery, smoke verification and production diagnostics. They use the
+repository's own scripts and fictitious values only.
+
 ## Before production
 
 - Configure HTTPS through a reverse proxy; keep PostgreSQL off the public
   network.
 - Provide real secrets through the environment, never through an image layer.
 - Schedule `infra/backups/backup.sh`, store backups encrypted off the host, and
-  run `infra/backups/restore.sh` as a restore test. See `infra/backups/README.md`.
+  run `infra/backups/verify.sh` on each one. The full procedure, including a restore
+  rehearsal and a recovery sequence, is in
+  [`docs/operations/backup-restore.md`](docs/operations/backup-restore.md); script
+  internals are in `infra/backups/README.md`.
 - Apply migrations and create the owner before the application starts: the
   `migrate` and `seed` services do both, or run them alone with
   `docker compose --profile full run --rm migrate` / `run --rm seed`.

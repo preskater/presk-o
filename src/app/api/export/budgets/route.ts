@@ -1,55 +1,13 @@
-import { requireApiAccess } from "@/lib/auth/guard";
-import { createCsvResponse, toCsv, type CsvColumn } from "@/lib/csv";
-import { currentMonthKey, isValidMonthKey, parseMonthKey } from "@/lib/dates";
-import { listBudgets } from "@/modules/budget/repository";
+import { serveCsvExport } from "@/lib/export-route";
 
 /**
- * CSV export of the monthly budgets.
+ * CSV export of the monthly budgets (`?entity=budgets` on the umbrella route).
  *
- * One month per file, like the transactions export: the month is the filter, an absent
- * or malformed `month` falls back to the current one. The read is bounded by its own
- * shape — one row per budgeted category and currency — so no row cap is needed here.
+ * One month by default (`?month=YYYY-MM`, current month when absent or malformed); a
+ * `from`/`to` window selects whole months. The builder is shared with `/api/export`.
  */
 export const dynamic = "force-dynamic";
 
-type BudgetRow = {
-  month: string;
-  category: string;
-  kind: string;
-  currency: string;
-  amount: string;
-};
-
-const COLUMNS: CsvColumn<BudgetRow>[] = [
-  { key: "month", header: "mois" },
-  { key: "category", header: "categorie" },
-  { key: "kind", header: "nature" },
-  { key: "currency", header: "devise" },
-  { key: "amount", header: "montant_prevu" },
-];
-
 export async function GET(request: Request): Promise<Response> {
-  const user = await requireApiAccess("export", "budget");
-  if (user instanceof Response) {
-    return user;
-  }
-
-  const url = new URL(request.url);
-  const monthParam = url.searchParams.get("month");
-  const monthKey = isValidMonthKey(monthParam) ? monthParam : currentMonthKey();
-  const { year, month } = parseMonthKey(monthKey);
-
-  const budgets = await listBudgets(user.workspace.id, { year, month });
-
-  const rows: BudgetRow[] = budgets.map((budget) => ({
-    month: monthKey,
-    category: budget.categoryName,
-    // Raw kind, like the transactions export keeps the raw type: the file is data.
-    kind: budget.categoryKind,
-    currency: budget.currency,
-    // Exact decimal string: no float, no thousands separator, dot as separator.
-    amount: budget.amount.toFixed(2),
-  }));
-
-  return createCsvResponse(toCsv(rows, COLUMNS), `budgets-${monthKey}.csv`);
+  return serveCsvExport(request, "budgets");
 }
