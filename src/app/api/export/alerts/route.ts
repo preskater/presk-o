@@ -1,4 +1,4 @@
-import { requireApiUser, unauthorizedResponse } from "@/lib/auth/guard";
+import { requireApiAccess } from "@/lib/auth/guard";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
 import { ALERT_STATUSES, describeAlert, isAlertVisible } from "@/modules/alerts/domain";
 import { listAlerts } from "@/modules/alerts/repository";
@@ -35,9 +35,9 @@ const COLUMNS: CsvColumn<AlertRow>[] = [
 ];
 
 export async function GET(request: Request): Promise<Response> {
-  const user = await requireApiUser();
-  if (!user) {
-    return unauthorizedResponse();
+  const user = await requireApiAccess("export");
+  if (user instanceof Response) {
+    return user;
   }
 
   const url = new URL(request.url);

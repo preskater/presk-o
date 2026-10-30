@@ -1,5 +1,4 @@
-import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
-import { hasModule } from "@/modules/catalog/catalog";
+import { requireApiAccess } from "@/lib/auth/guard";
 import { createCsvResponse, EXPORT_ROW_LIMIT, toCsv, type CsvColumn } from "@/lib/csv";
 import {
   currentMonthKey,
@@ -53,12 +52,9 @@ const COLUMNS: CsvColumn<TransactionRow>[] = [
 ];
 
 export async function GET(request: Request): Promise<Response> {
-  const user = await requireApiUser();
-  if (!user) {
-    return unauthorizedResponse();
-  }
-  if (!hasModule(user.workspace, "budget")) {
-    return moduleUnavailableResponse();
+  const user = await requireApiAccess("export", "budget");
+  if (user instanceof Response) {
+    return user;
   }
 
   const url = new URL(request.url);

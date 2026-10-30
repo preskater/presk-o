@@ -1,15 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requireApiUserMock = vi.fn();
+const requireApiAccessMock = vi.fn();
 const listAlertsMock = vi.fn();
 
 vi.mock("@/lib/auth/guard", () => ({
-  requireApiUser: () => requireApiUserMock(),
-  unauthorizedResponse: () =>
-    new Response(JSON.stringify({ error: "Non autorisé." }), {
-      status: 401,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    }),
+  requireApiAccess: (...args: unknown[]) => requireApiAccessMock(...args),
 }));
 vi.mock("@/modules/alerts/repository", () => ({
   listAlerts: (...args: unknown[]) => listAlertsMock(...args),
@@ -26,7 +21,7 @@ const OWNER = {
   id: "owner-1",
   email: "owner@example.test",
   name: null,
-  workspace: { id: "ws-owner-1", modules: ["budget", "real-estate", "development"] },
+  workspace: { id: "ws-owner-1", role: "OWNER", modules: ["budget", "real-estate", "development"] },
 };
 
 function alertRecord(overrides: Record<string, unknown> = {}) {
@@ -55,17 +50,20 @@ async function bodyOf(response: Response): Promise<string[]> {
 }
 
 beforeEach(() => {
-  requireApiUserMock.mockReset().mockResolvedValue(OWNER);
+  requireApiAccessMock.mockReset().mockResolvedValue(OWNER);
   listAlertsMock.mockReset().mockResolvedValue([alertRecord()]);
 });
 
 describe("GET /api/export/alerts", () => {
   it("refuses an unauthenticated request and reads nothing", async () => {
-    requireApiUserMock.mockResolvedValue(null);
+    requireApiAccessMock.mockResolvedValue(
+      Response.json({ error: "authentication_required" }, { status: 401 }),
+    );
 
     const response = await GET(new Request("http://test.local/api/export/alerts"));
 
     expect(response.status).toBe(401);
+    expect(requireApiAccessMock).toHaveBeenCalledWith("export");
     expect(listAlertsMock).not.toHaveBeenCalled();
   });
 
@@ -163,7 +161,7 @@ describe("GET /api/export/alerts", () => {
   });
 
   it("leaves out the alerts of a module inactive in the workspace", async () => {
-    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+    requireApiAccessMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
     listAlertsMock.mockResolvedValue([alertRecord()]);
 
     const lines = await bodyOf(await GET(new Request("http://test.local/api/export/alerts")));

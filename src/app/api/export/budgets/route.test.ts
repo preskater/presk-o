@@ -1,18 +1,13 @@
 import Decimal from "decimal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const requireApiUserMock = vi.fn();
+const requireApiAccessMock = vi.fn();
 const listBudgetsMock = vi.fn();
 
 vi.mock("@/lib/auth/guard", () => ({
-  requireApiUser: () => requireApiUserMock(),
-  // Faithful enough for the gate: the real helper is covered with the auth module.
-  unauthorizedResponse: () =>
-    new Response(JSON.stringify({ error: "Non autorisé." }), {
-      status: 401,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    }),
-  moduleUnavailableResponse: () => new Response(null, { status: 404 }),
+  // The real gate is covered by `src/lib/auth/guard.test.ts` and the route × role
+  // matrix; these tests pin the route's read and CSV behaviour.
+  requireApiAccess: (...args: unknown[]) => requireApiAccessMock(...args),
 }));
 vi.mock("@/modules/budget/repository", () => ({
   listBudgets: (...args: unknown[]) => listBudgetsMock(...args),
@@ -29,7 +24,7 @@ const OWNER = {
   id: "owner-1",
   email: "owner@example.test",
   name: null,
-  workspace: { id: "ws-owner-1", modules: ["budget"] },
+  workspace: { id: "ws-owner-1", role: "OWNER", modules: ["budget"] },
 };
 
 const BUDGET_EUR = {
@@ -55,7 +50,7 @@ const BUDGET_USD = {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 6, 12, 0)));
-  requireApiUserMock.mockReset().mockResolvedValue(OWNER);
+  requireApiAccessMock.mockReset().mockResolvedValue(OWNER);
   listBudgetsMock.mockReset().mockResolvedValue([BUDGET_EUR, BUDGET_USD]);
 });
 
@@ -65,7 +60,9 @@ afterEach(() => {
 
 describe("GET /api/export/budgets", () => {
   it("refuses an unauthenticated request and reads nothing", async () => {
-    requireApiUserMock.mockResolvedValue(null);
+    requireApiAccessMock.mockResolvedValue(
+      Response.json({ error: "authentication_required" }, { status: 401 }),
+    );
 
     const response = await GET(new Request("http://test.local/api/export/budgets"));
 
@@ -74,7 +71,7 @@ describe("GET /api/export/budgets", () => {
   });
 
   it("answers 404 and reads nothing when the budget module is disabled", async () => {
-    requireApiUserMock.mockResolvedValue({ ...OWNER, workspace: { ...OWNER.workspace, modules: [] } });
+    requireApiAccessMock.mockResolvedValue(Response.json({ error: "not_found" }, { status: 404 }));
 
     const response = await GET(new Request("http://test.local/api/export/budgets"));
 
@@ -88,6 +85,7 @@ describe("GET /api/export/budgets", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(requireApiAccessMock).toHaveBeenCalledWith("export", "budget");
     expect(listBudgetsMock).toHaveBeenCalledWith(OWNER.workspace.id, { year: 2026, month: 9 });
 
     expect(response.headers.get("Cache-Control")).toBe("no-store");

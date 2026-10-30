@@ -1,5 +1,4 @@
-import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
-import { hasModule } from "@/modules/catalog/catalog";
+import { requireApiAccess } from "@/lib/auth/guard";
 import { createCsvResponse, toCsv, type CsvColumn } from "@/lib/csv";
 import { toDateOnlyString } from "@/lib/dates";
 import { listProperties } from "@/modules/real-estate/repository";
@@ -50,12 +49,9 @@ const COLUMNS: CsvColumn<PropertyRow>[] = [
 ];
 
 export async function GET(): Promise<Response> {
-  const user = await requireApiUser();
-  if (!user) {
-    return unauthorizedResponse();
-  }
-  if (!hasModule(user.workspace, "real-estate")) {
-    return moduleUnavailableResponse();
+  const user = await requireApiAccess("export", "real-estate");
+  if (user instanceof Response) {
+    return user;
   }
 
   const properties = await listProperties(user.workspace.id);
