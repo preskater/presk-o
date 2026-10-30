@@ -16,6 +16,7 @@ the pages that consume it.
 | `identity` | The owner account and workspace memberships (roles `OWNER`, `ADMIN`, `MEMBER`, `VIEWER`). No public sign-up: the account and its personal workspace are created by the seed script. | `repository.ts`, `workspace.ts` |
 | `catalog` | Module catalog (stable keys, prerequisites, configuration schemas) and per-workspace activation. Navigation and the module guards read from it. | `catalog.ts`, `repository.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
+| `ai-costs` | Exact cost amounts, each with a mandatory actuality and an immutable source reference. Primitives only: no persistence, provider call or allocation yet (M9-01). | `domain.ts`, `actuality.ts`, `source.ts`, `money.ts`, `amount.ts` |
 | `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
 | `alerts` | Deterministic warning engine: rule configuration, one bounded evaluation pass, episode lifecycle (fingerprint suppression, dismissal). Rules sit next to their data: `budget/alerts.ts`, `integrations/alerts.ts`, `real-estate/alerts.ts`. | `domain.ts`, `lifecycle.ts`, `refresh.ts`, `repository.ts` |
@@ -134,6 +135,18 @@ asked for: a cascade here would silently change what a property is worth.
   neighbouring month. The end-of-month bound is exclusive.
 - **Currencies** are stored per row. A total is always computed per currency;
   mixing currencies raises an error instead of inventing an exchange rate.
+- **Cost ledger primitives** live in `src/modules/ai-costs` and follow the same money
+  rules. A provider export may carry more than two decimals; it is rounded **half-up
+  to the cent** exactly once, at the boundary (`roundToCents`), and the original
+  currency is kept — nothing is converted. Every `CostAmount` also carries a mandatory
+  **actuality** (`observed`, `derived`, `allocated`, `estimated`, `reconciled`) and an
+  immutable **source reference** (`provider`, `import`, `manual`). `money: null` means
+  unknown: a total containing one unknown amount is `null`, never a partial sum and
+  never zero, and an empty set is also unknown because "no data" is not "zero cost".
+  `source.capturedAt` is a UTC instant; `operationDate` is a calendar day. The two
+  answer different questions and are never derived from one another. Source references
+  are frozen, hold identifiers only, and reject token-shaped values, so a secret is
+  never stored as a source.
 - **Imports** are made re-runnable by a unique constraint on
   `(accountId, externalRef)`: replaying an import fails loudly instead of
   duplicating a line. The manual CSV import (page « Importer un CSV », see below) uses
@@ -1184,5 +1197,7 @@ age is not restorability: that verification is SO-04.
   deleted, each with its usage counts shown first. Properties and cashflow entries
   still cannot be edited or deleted from the interface.
 - No document/attachment storage.
+- The `ai-costs` module ships its money, actuality and source primitives only: no cost
+  entry, allocation, import or provider synchronisation exists yet.
 - The integrations page triggers a synchronisation on demand; no scheduler entry
   point (cron unit, platform job) ships with the repository yet.
