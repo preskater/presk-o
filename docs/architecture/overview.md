@@ -16,8 +16,8 @@ the pages that consume it.
 | `identity` | The owner account and workspace memberships (roles `OWNER`, `ADMIN`, `MEMBER`, `VIEWER`). No public sign-up: the account and its personal workspace are created by the seed script. | `repository.ts`, `workspace.ts` |
 | `catalog` | Module catalog (stable keys, prerequisites, configuration schemas) and per-workspace activation. Navigation and the module guards read from it. | `catalog.ts`, `repository.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
+| `real-estate` | Properties, cashflow entries, due dates, the double-counting rule, financing and property indicators. | `domain.ts`, `kpis.ts`, `repository.ts` |
 | `ai-costs` | Exact cost amounts, each with a mandatory actuality and an immutable source reference. Primitives only: no persistence, provider call or allocation yet (M9-01). | `domain.ts`, `actuality.ts`, `source.ts`, `money.ts`, `amount.ts` |
-| `real-estate` | Properties, cashflow entries, due dates, and the double-counting rule. | `domain.ts`, `repository.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
 | `alerts` | Deterministic warning engine: rule configuration, one bounded evaluation pass, episode lifecycle (fingerprint suppression, dismissal). Rules sit next to their data: `budget/alerts.ts`, `integrations/alerts.ts`, `real-estate/alerts.ts`. | `domain.ts`, `lifecycle.ts`, `refresh.ts`, `repository.ts` |
 | `search` | Global search across the owner's own entities and provider snapshots, one bounded and grouped result set per query. | `domain.ts`, `repository.ts` |
@@ -463,7 +463,12 @@ asked for: a cascade here would silently change what a property is worth.
     the rule is enabled, applies the `BUDGET_THRESHOLD` percentage as the preventive
     alert line. A month without a budget is « no budget », not a zero envelope.
 - Property totals — each cashflow entry counts once. When an entry is linked to
-  a transaction, the transaction is the only source of the amount.
+  a transaction, the transaction is the only source of the amount. Amounts are never
+  converted: the totals are expressed in the property's own currency
+  (`selectCashflowTotalsCurrency`), an entry in another currency is excluded and
+  counted (`foreignCurrencyCashflows`) rather than summed, and the sale indicator reads
+  the net invested capital as **unknown** as soon as one entry was excluded — a total
+  covering one currency is not the property's whole result.
 - Property financing (real-estate page, « Financement » card) — the loans of a property,
   shown beside the operating figures and **never added to them**:
   - *monthly cost* — the sum of each loan's monthly payment + insurance, per currency;
@@ -516,6 +521,51 @@ asked for: a cascade here would silently change what a property is worth.
     loan starts, valuation and sale, most recent first. A cashflow linked to a
     transaction carries the **transaction's** amount, like the totals, so the history
     and the figures can never disagree.
+- Property performance indicators (property detail, « Indicateurs de performance »,
+  RE-03) — `computePropertyKpis`, a pure function of the property's cashflow entries,
+  loans and one explicit window. No market benchmark is read and nothing is extrapolated.
+  - *window* — always twelve whole months, so a sum over the window is an annual figure
+    and a yield needs no annualisation. Two windows are offered: the twelve last months
+    (`?period=trailing`, the default, current month included) and a calendar year
+    (`?period=YYYY`, offered only when something is dated in it). A malformed, pre-1970
+    or future value falls back to the rolling window instead of failing the page. The
+    bounds are `start` inclusive and `end` exclusive, so one entry belongs to exactly one
+    window.
+  - *dating* — an entry is placed by its settlement date, else its due date, else its
+    creation date (`cashflowEntryDate`), the rule the history already uses, so the two
+    can never place one entry in different periods.
+  - *currency* — the reference currency is the property's price currency. An entry in
+    another currency is excluded and counted, never converted; the yields read unknown as
+    soon as the window holds one, because the sums would then describe only part of the
+    rent. Loan currencies follow the same rule.
+  - *rental income* — the INCOME entries dated in the window; *operating expenses* — the
+    EXPENSE entries, reported as a positive number. A transaction-linked entry is resolved
+    once (`resolveCashflowAmount`), exactly like the property totals, so no money is
+    counted twice. An entry with neither an amount nor a transaction is excluded and
+    counted rather than failing the card.
+  - *NOI* — rental income − operating expenses.
+  - *financing cost* — monthly payment + insurance of each loan, multiplied by the months
+    the loan is active inside the window (monthly granularity: a loan started mid-month
+    costs a full month). A loan repaid before the window costs nothing; a loan without a
+    start date is counted over the whole window and says so. A loan in another currency,
+    or one recording neither payment nor insurance, makes the cost **unknown** — never a
+    partial sum, never a zero. Financing is read from the loan records only: a loan
+    instalment must not be entered as a property cashflow.
+  - *cash flow after financing* — NOI − financing cost; unknown as soon as the financing
+    cost is.
+  - *gross yield* — rental income ÷ acquisition price, in percent; *net yield* — NOI ÷
+    acquisition price. The denominator is the acquisition price, never a valuation, and
+    the numerator is not annualised: both read unknown when the acquisition price is
+    missing, when the window is the calendar year still running (a partial year is not
+    extrapolated), when the window holds no cashflow, or when it holds a foreign-currency
+    one.
+  - *occupancy* — the property's declared `PropertyOccupancy`, shown beside the one signal
+    that is measurable today: the number of months with at least one recorded rent. There
+    is no lease table, so neither the declared status nor the absence of rent is turned
+    into an occupancy *rate*.
+  - *no data* — a window without a single cashflow computes no figure at all and the card
+    says so, instead of printing a grid of zeros. A property with recorded expenses but no
+    rent does show a real rental income of 0, with its months-with-rent count beside it.
 - GitHub issues — only **open** issues and pull requests are kept, and only the
   fields needed to act: title, link, author, **assignees**, **milestone**, comment
   count, labels, dates. No description, no comment body, no source code: reading them

@@ -195,6 +195,18 @@ describe("computeSaleAnalysis", () => {
     expect(analysis.status).toBe("UNKNOWN");
   });
 
+  it("treats partial totals as a mismatch rather than a complete currency", () => {
+    // Some cashflows are in another currency and were excluded before the analysis:
+    // the remaining EUR total must not be presented as the property's full result.
+    const analysis = computeSaleAnalysis(
+      input({ estimatedValue: new Decimal("250000.00"), totalsComplete: false }),
+    );
+
+    expect(analysis.currencyMismatch).toBe(true);
+    expect(analysis.netInvested).toBeNull();
+    expect(analysis.status).toBe("UNKNOWN");
+  });
+
   it("does not invent a negative gain target when rents repaid the capital", () => {
     const analysis = computeSaleAnalysis(
       input({
