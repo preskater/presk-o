@@ -17,11 +17,16 @@ export type CsvColumn<Row> = {
  * The decision is **bound, don't stream**: an export is built in memory from one SQL
  * read, so the read itself carries the limit. At this size the file stays a few
  * megabytes — comfortable for a spreadsheet — and the server never risks building an
- * unbounded string. Past this cap the right answer would be a real streaming writer
- * (cursor + chunked response); until a dataset actually reaches it, that complexity
- * buys nothing. Every route passes this value to its repository read.
+ * unbounded string. Every route reads `EXPORT_ROW_LIMIT + 1` rows: the extra one proves
+ * the window was cut, so the response can say so (`X-Export-Truncated`) instead of
+ * silently delivering a prefix. Past this cap the right answer would be a real streaming
+ * writer (cursor + chunked response); until a dataset actually reaches it, that
+ * complexity buys nothing.
  */
 export const EXPORT_ROW_LIMIT = 10_000;
+
+/** Every export response carries this header, `true` when the row cap cut the file. */
+export const EXPORT_TRUNCATED_HEADER = "X-Export-Truncated";
 
 const FORMULA_TRIGGERS = ["=", "+", "@", "\t", "\r"];
 
@@ -70,10 +75,14 @@ export function toCsv<Row extends Record<string, unknown>>(
  *
  * The UTF-8 BOM keeps accents readable when the file is opened directly in
  * Excel; bank and spreadsheet tools that dislike it can strip it.
+ *
+ * `truncated` is stated rather than implied: a spreadsheet cannot tell a complete file
+ * from a capped one, so the header is the only place the cut is visible.
  */
 export function createCsvResponse(
   csv: string,
   fileName: string,
+  options: { truncated?: boolean } = {},
 ): Response {
   return new Response(`\uFEFF${csv}`, {
     headers: {
@@ -81,6 +90,7 @@ export function createCsvResponse(
       "Content-Disposition": `attachment; filename="${fileName}"`,
       // Personal financial data: never cache an export in a shared proxy.
       "Cache-Control": "no-store",
+      [EXPORT_TRUNCATED_HEADER]: options.truncated ? "true" : "false",
     },
   });
 }

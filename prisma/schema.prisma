@@ -181,6 +181,7 @@ model Workspace {
   connections          IntegrationConnection[]
   alerts               Alert[]
   alertRules           AlertRule[]
+  auditEvents          AuditEvent[]
 }
 
 /// Activation of one catalog module (`src/modules/catalog`) in one workspace. The key is
@@ -238,6 +239,7 @@ model User {
   connections IntegrationConnection[]
   alerts      Alert[]
   alertRules  AlertRule[]
+  auditEvents AuditEvent[]
   memberships WorkspaceMember[]
   sessions    Session[]
 }
@@ -998,4 +1000,39 @@ model AlertRule {
   workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, kind])
+}
+
+/// One security-relevant or data-changing action, kept for the owner's own review.
+///
+/// Append-only from the application's perspective: no Route Handler, Server Action or
+/// job updates or deletes a row, and nothing exposes a write to the browser. Only
+/// codes, identifiers and counts are stored — never a payload, a label, an amount or a
+/// secret: `redactAuditMetadata` in `src/modules/audit` drops them before insert.
+///
+/// `actorId` is null when the action has no signed-in user (a job or a scheduler), so
+/// the entry survives the actor's deletion instead of disappearing with them.
+///
+/// The action codes live in code (`AUDIT_ACTIONS`), like module keys: adding one needs
+/// no migration. Retention is documented in `docs/architecture/overview.md`.
+model AuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  /// Stable action code, for example `export.transactions`.
+  action      String
+  /// Coarse entity family, for example `EXPORT` or `TRANSACTION`.
+  entityType  String
+  /// Identifier of the entity, when a single row is concerned.
+  entityId    String?
+  /// `SUCCESS`, `REFUSED` or `FAILED`.
+  outcome     String
+  /// Safe metadata: counts, codes and calendar days only.
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, action, createdAt])
 }

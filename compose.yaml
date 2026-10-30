@@ -60,9 +60,9 @@ services:
       # reach. Keep it identical to the origin you actually browse, and to APP_HOST
       # below: cookies are per host, so a mismatch means signing in on one origin and
       # being unknown on the other.
-      # Set AUTH_URL to the exact origin users browse when a stable public
-      # hostname is required. With AUTH_TRUST_HOST=true, leaving it unset lets
-      # Auth.js use the incoming host, including a device's LAN IP.
+      # Set AUTH_URL to the exact origin users browse. An empty value is not "unset"
+      # for Auth.js: sign-in fails with UntrustedHost. .env.example provides a valid
+      # local default; a deployment must set its own public origin.
       AUTH_URL: ${AUTH_URL:-}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
       NEXT_PUBLIC_DEFAULT_CURRENCY: ${NEXT_PUBLIC_DEFAULT_CURRENCY:-EUR}

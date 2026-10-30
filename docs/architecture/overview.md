@@ -17,10 +17,12 @@ the pages that consume it.
 | `catalog` | Module catalog (stable keys, prerequisites, configuration schemas) and per-workspace activation. Navigation and the module guards read from it. | `catalog.ts`, `repository.ts` |
 | `budget` | Accounts, categories, transactions, monthly budgets, budget follow-up, salary simulation, recurring forecasts, financial goals, the savings threshold and monthly aggregation. | `domain.ts`, `totals.ts`, `salary.ts`, `report.ts`, `recurrence.ts`, `goals.ts`, `savings.ts`, `transactions.ts`, `repository.ts` |
 | `real-estate` | Properties, cashflow entries, due dates, the double-counting rule, financing and property indicators. | `domain.ts`, `kpis.ts`, `repository.ts` |
+| `ai-costs` | Exact cost amounts, each with a mandatory actuality and an immutable source reference. Primitives only: no persistence, provider call or allocation yet (M9-01). | `domain.ts`, `actuality.ts`, `source.ts`, `money.ts`, `amount.ts` |
 | `integrations` | Read-only GitHub and GitLab connections, provider adapters, snapshots. | `domain.ts`, `adapter.ts`, `github.ts`, `gitlab.ts`, `repository.ts` |
 | `alerts` | Deterministic warning engine: rule configuration, one bounded evaluation pass, episode lifecycle (fingerprint suppression, dismissal). Rules sit next to their data: `budget/alerts.ts`, `integrations/alerts.ts`, `real-estate/alerts.ts`. | `domain.ts`, `lifecycle.ts`, `refresh.ts`, `repository.ts` |
 | `search` | Global search across the owner's own entities and provider snapshots, one bounded and grouped result set per query. | `domain.ts`, `repository.ts` |
 | `dashboard` | Read-only aggregation for the home page. | `queries.ts` |
+| `audit` | Append-only trail of security-sensitive and data-changing actions (exports today). Codes, counts and calendar days only. | `domain.ts`, `repository.ts` |
 
 Cross-cutting code sits in `src/lib` (`db`, `env`, `money`, `dates`, `csv`,
 `crypto`, `auth`). Background work sits in `src/jobs` and is triggered from
@@ -133,6 +135,18 @@ asked for: a cascade here would silently change what a property is worth.
   neighbouring month. The end-of-month bound is exclusive.
 - **Currencies** are stored per row. A total is always computed per currency;
   mixing currencies raises an error instead of inventing an exchange rate.
+- **Cost ledger primitives** live in `src/modules/ai-costs` and follow the same money
+  rules. A provider export may carry more than two decimals; it is rounded **half-up
+  to the cent** exactly once, at the boundary (`roundToCents`), and the original
+  currency is kept — nothing is converted. Every `CostAmount` also carries a mandatory
+  **actuality** (`observed`, `derived`, `allocated`, `estimated`, `reconciled`) and an
+  immutable **source reference** (`provider`, `import`, `manual`). `money: null` means
+  unknown: a total containing one unknown amount is `null`, never a partial sum and
+  never zero, and an empty set is also unknown because "no data" is not "zero cost".
+  `source.capturedAt` is a UTC instant; `operationDate` is a calendar day. The two
+  answer different questions and are never derived from one another. Source references
+  are frozen, hold identifiers only, and reject token-shaped values, so a secret is
+  never stored as a source.
 - **Imports** are made re-runnable by a unique constraint on
   `(accountId, externalRef)`: replaying an import fails loudly instead of
   duplicating a line. The manual CSV import (page « Importer un CSV », see below) uses
@@ -853,8 +867,11 @@ beside its fields.
 - Provider tokens are encrypted at rest (AES-256-GCM, key from the environment)
   and never returned to the browser; only `hasStoredToken` is exposed.
 - Provider permissions are read-only; the adapters expose no write operation.
-- Exports are `no-store` and CSV values that could be read as a spreadsheet
-  formula are neutralised.- Personal data is never placed in fixtures, screenshots or logs. Error messages
+- Exports are `no-store`, authenticated, owner-scoped and bounded, and CSV values that
+  could be read as a spreadsheet formula are neutralised (see **Exports**). Every
+  delivered file writes one audit entry; a file whose entry cannot be written is
+  withheld.
+- Personal data is never placed in fixtures, screenshots or logs. Error messages
   persisted for display contain a code, never a token or a payload.
 
 ## Responsive, dark mode and installability (UX-03)
@@ -924,32 +941,90 @@ Rules, in one place:
 
 ## Exports
 
-Four CSV exports leave the application, all through their own Route Handler:
-`/api/export/transactions` (a month by default, a whole year with `?year=YYYY`, every
-month with `?all=1`, plus account, category, type, text and reconciliation filters),
-`/api/export/budgets` (month), `/api/export/goals` (status filter) and
-`/api/export/alerts` (status filter); properties have their own since the first
-slice. They share the same guards: `requireApiUser()` first (401 JSON, no read), the
-owner coming from the session and never from the query string, `Cache-Control:
-no-store`, and every value passing through `toCsv` in `lib/csv.ts` — a cell starting
-with `=`, `+`, `@` (or a number-compatible minus sign) is neutralised, while a plain
-negative amount such as `-350.00` stays a number.
+Five CSV exports leave the application. Each entity keeps its own Route Handler, and the
+umbrella `/api/export?entity=...` selects the same builder, so both entry points share
+the guards, the columns, the row bound and the audit entry:
+
+| Route | Module | Filters |
+| --- | --- | --- |
+| `/api/export/transactions` | `budget` | `from`/`to`, `month` (default), `year`, `all=1`, `account`, `category`, `type`, `q`, `reconciled` |
+| `/api/export/properties` | `real-estate` | `from`/`to` on the acquisition date |
+| `/api/export/budgets` | `budget` | `from`/`to` (whole months) or `month` (default) |
+| `/api/export/goals` | `budget` | `status`, `from`/`to` on the target date |
+| `/api/export/alerts` | none (module-filtered) | `status`, `from`/`to` on the trigger instant |
+
+They share the same guards: `requireApiUser()` first (401 JSON, no read), the owner
+coming from the session and never from the query string, `Cache-Control: no-store`, and
+every value passing through `toCsv` in `lib/csv.ts` — a cell starting with `=`, `+`, `@`
+(or a number-compatible minus sign) is neutralised, while a plain negative amount such as
+`-350.00` stays a number.
+
+`entity` is a closed code from `EXPORT_ENTITIES`, never a path or a table name: a missing
+or unknown value, including `all`, answers 400 with the supported list before any read.
+The dispatch is a `switch` over that union, so no query string reaches a read outside the
+catalogue.
+
+### Date and entity filters
+
+`from` and `to` are `YYYY-MM-DD` calendar days, both **inclusive**; internally the read
+uses an exclusive upper bound (`to` + one day), the convention every other query uses. A
+missing side is unbounded — `?from=2026-01-01` reads everything after that day.
+
+A malformed day, an impossible one (`2026-02-31`) or `from > to` answers 400
+(`invalid_export_filter`) instead of falling back: a `month` link with a typo may fall
+back to the current month, but an explicit window must be honoured or refused, never
+quietly replaced by a different period. When a window is present it wins over `all`,
+`year` and `month`.
+
+The bounds apply to the entity's own date: the operation date for transactions, the
+acquisition date for properties, the target date for goals and the trigger instant for
+alerts. A budget is stored per month, so its window selects **whole months**
+(`from=2026-02-15&to=2026-04-02` reads February to April). Alerts are instants and a URL
+carries no time zone, so those bounds are UTC days. A property without an acquisition
+date is absent from a windowed file: it cannot be said to belong to the period.
 
 Two conventions of the data apply to the files. An **unknown value is an empty
 cell**, never a zero: a goal whose amount cannot be read exports blank numeric
 columns plus the reason in its `note` field. **Instants are ISO 8601 in UTC** (the
 alerts export), since a file loses the display time zone; calendar days stay
 `YYYY-MM-DD`. The transaction export carries the reconciliation day in its own
-`pointe_le` column — an empty cell is "not checked yet", a state, not a missing date —
-and a malformed month falls back to the current one — `isValidMonthKey`
-exists because `parseMonthKey` throws on `2026-13`, and a bad link must not crash a
-page.
+`pointe_le` column — an empty cell is "not checked yet", a state, not a missing date.
 
-Large exports are **bounded, not streamed**: every route passes `EXPORT_ROW_LIMIT`
-(10 000 rows, defined in `lib/csv.ts`) to its read, so the response is one SQL read
-and one in-memory string — a few megabytes, comfortable for a spreadsheet. Past that
-cap the right answer would be a cursor and a chunked response; until a dataset
-reaches it, the streaming machinery would buy nothing.
+### Row bound, truncation and memory
+
+Large exports are **bounded, not streamed**: every read asks for `EXPORT_ROW_LIMIT + 1`
+rows (10 001) and the file carries at most `EXPORT_ROW_LIMIT` (10 000) plus its header.
+The extra row is never written — its presence sets `X-Export-Truncated: true`, because a
+spreadsheet cannot tell a complete file from a prefix. The response is one SQL read and
+one in-memory string, a few megabytes at this cap. Past it the right answer would be a
+cursor and a chunked response; the header is what makes the cut visible until then. The
+single-month budget export is bounded by its own shape (one row per category and
+currency).
+
+### Audit of exports (SO-02)
+
+Every delivered file writes one `AuditEvent` row: the workspace, the actor, the action
+code (`export.transactions`, `export.properties`, `export.budgets`, `export.goals`,
+`export.alerts`), `entityType: "EXPORT"`, the outcome, and metadata limited to the
+resolved scope, the bounds, the row count and the truncation flag. Metadata passes
+through `redactAuditMetadata` (`src/modules/audit/domain.ts`), which drops a sensitive key
+outright (`token`, `email`, `label`, `amount`, …) and replaces free text with
+`[redacted]`, so the trail never becomes a second copy of the ledger.
+
+The entry is written after the read and **before** the response: a failed write answers
+500 and withholds the file, because an export the trail does not know about is worse than
+an export delayed by a database error. Nothing in the application exposes an update or a
+delete of `AuditEvent`, so the trail is append-only in practice, not only by convention.
+
+A refused export — an invalid window or an unknown `entity` — is not recorded: it reads
+nothing, and logging every malformed link would let a client fill the trail. The
+vocabulary reserves `REFUSED` and `FAILED` for writers that modify data and must state
+that they did not.
+
+Retention: rows are **not pruned yet**. They are cheap (codes, counts and calendar days,
+no payload), and their bound belongs to the retention work of M18, which will reuse the
+cutoff helper already used by `SyncRun` (`src/jobs/retention.ts`). Until that job exists,
+a manual `DELETE` scoped by `workspaceId` and `createdAt` is the documented procedure.
 
 ## Synchronisation
 
@@ -1172,5 +1247,7 @@ age is not restorability: that verification is SO-04.
   deleted, each with its usage counts shown first. Properties and cashflow entries
   still cannot be edited or deleted from the interface.
 - No document/attachment storage.
+- The `ai-costs` module ships its money, actuality and source primitives only: no cost
+  entry, allocation, import or provider synchronisation exists yet.
 - The integrations page triggers a synchronisation on demand; no scheduler entry
   point (cron unit, platform job) ships with the repository yet.

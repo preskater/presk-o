@@ -1,8 +1,4 @@
-import { requireApiUser, unauthorizedResponse, moduleUnavailableResponse } from "@/lib/auth/guard";
-import { hasModule } from "@/modules/catalog/catalog";
-import { createCsvResponse, toCsv, type CsvColumn } from "@/lib/csv";
-import { toDateOnlyString } from "@/lib/dates";
-import { listProperties } from "@/modules/real-estate/repository";
+import { serveCsvExport } from "@/lib/export-route";
 
 /** CSV export of the properties, with their totals. Authenticated server-side. */
 export const dynamic = "force-dynamic";
